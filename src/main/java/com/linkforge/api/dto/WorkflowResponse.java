@@ -3,6 +3,7 @@ package com.linkforge.api.dto;
 import com.linkforge.domain.workflow.AgentDecision;
 import com.linkforge.domain.workflow.PlannedTask;
 import com.linkforge.domain.workflow.WorkflowApproval;
+import com.linkforge.domain.workflow.WorkflowCancellation;
 import com.linkforge.domain.workflow.WorkflowClarification;
 import com.linkforge.domain.workflow.WorkflowEvent;
 import com.linkforge.domain.workflow.WorkflowRun;
@@ -34,7 +35,8 @@ public record WorkflowResponse(
         List<WorkflowEvent> events,
         List<AgentDecision> agentDecisions,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        WorkflowCancellation cancellation
 ) {
     public static WorkflowResponse from(WorkflowRun run) {
         String repoSummary = run.getRepositoryEvidence() != null
@@ -63,7 +65,8 @@ public record WorkflowResponse(
                 run.getEvents(),
                 run.getAgentDecisions(),
                 run.getCreatedAt(),
-                run.getUpdatedAt()
+                run.getUpdatedAt(),
+                run.getCancellation()
         );
     }
 }

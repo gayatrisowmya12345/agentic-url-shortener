@@ -42,3 +42,14 @@ CREATE TABLE IF NOT EXISTS workflow_approvals (
 
 CREATE INDEX IF NOT EXISTS idx_clarifications_workflow_id ON workflow_clarifications(workflow_id);
 CREATE INDEX IF NOT EXISTS idx_approvals_workflow_id ON workflow_approvals(workflow_id);
+
+CREATE TABLE IF NOT EXISTS workflow_cancellations (
+    id VARCHAR(36) PRIMARY KEY,
+    workflow_id VARCHAR(36) NOT NULL UNIQUE,
+    cancelled_by VARCHAR(255) NOT NULL,
+    reason VARCHAR(2048),
+    cancelled_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_cancellations_workflow_id ON workflow_cancellations(workflow_id);
+

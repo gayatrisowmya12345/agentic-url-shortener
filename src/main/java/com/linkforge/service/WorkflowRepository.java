@@ -1,6 +1,7 @@
 package com.linkforge.service;
 
 import com.linkforge.domain.workflow.WorkflowApproval;
+import com.linkforge.domain.workflow.WorkflowCancellation;
 import com.linkforge.domain.workflow.WorkflowClarification;
 import com.linkforge.domain.workflow.WorkflowRun;
 import org.slf4j.Logger;
@@ -59,6 +60,11 @@ public class WorkflowRepository {
                 if (run.getApproval() != null) {
                     persistOrUpdateApproval(run.getApproval());
                 }
+
+                // Persist cancellation if present
+                if (run.getCancellation() != null) {
+                    persistOrUpdateCancellation(run.getCancellation());
+                }
             } catch (Exception e) {
                 log.error("Failed to persist workflow metadata to H2 for workflow {}: {}", run.getId(), e.getMessage(), e);
             }
@@ -88,6 +94,11 @@ public class WorkflowRepository {
                 if (approvalOpt.isPresent() && run.getApproval() == null) {
                     run.setApproval(approvalOpt.get());
                 }
+
+                Optional<WorkflowCancellation> cancellationOpt = findCancellationByWorkflowId(id);
+                if (cancellationOpt.isPresent() && run.getCancellation() == null) {
+                    run.setCancellation(cancellationOpt.get());
+                }
             } catch (Exception e) {
                 log.warn("Error hydrating workflow {} from H2: {}", id, e.getMessage());
             }
@@ -106,6 +117,7 @@ public class WorkflowRepository {
             try {
                 jdbcTemplate.update("DELETE FROM workflow_approvals");
                 jdbcTemplate.update("DELETE FROM workflow_clarifications");
+                jdbcTemplate.update("DELETE FROM workflow_cancellations");
             } catch (Exception e) {
                 log.warn("Error clearing H2 workflow tables: {}", e.getMessage());
             }
@@ -263,6 +275,85 @@ public class WorkflowRepository {
                     rs.getString("plan_hash"),
                     toInstant(rs.getTimestamp("decided_at")),
                     rs.getString("comments")
+            );
+        }
+    }
+
+    public void saveCancellation(WorkflowCancellation cancellation) {
+        if (cancellation == null) {
+            return;
+        }
+        WorkflowRun run = storage.get(cancellation.workflowId());
+        if (run != null) {
+            run.setCancellation(cancellation);
+        }
+
+        if (jdbcTemplate != null) {
+            persistOrUpdateCancellation(cancellation);
+        }
+    }
+
+    public Optional<WorkflowCancellation> findCancellationByWorkflowId(String workflowId) {
+        if (workflowId == null || workflowId.isBlank()) {
+            return Optional.empty();
+        }
+        if (jdbcTemplate == null) {
+            WorkflowRun run = storage.get(workflowId);
+            return run != null ? Optional.ofNullable(run.getCancellation()) : Optional.empty();
+        }
+
+        String sql = "SELECT id, workflow_id, cancelled_by, reason, cancelled_at FROM workflow_cancellations WHERE workflow_id = ?";
+        try {
+            WorkflowCancellation cancellation = jdbcTemplate.queryForObject(sql, new CancellationRowMapper(), workflowId);
+            return Optional.ofNullable(cancellation);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        } catch (Exception e) {
+            log.warn("Failed to query cancellation for workflow {}: {}", workflowId, e.getMessage());
+            WorkflowRun run = storage.get(workflowId);
+            return run != null ? Optional.ofNullable(run.getCancellation()) : Optional.empty();
+        }
+    }
+
+    private void persistOrUpdateCancellation(WorkflowCancellation cancellation) {
+        if (jdbcTemplate == null || cancellation == null) {
+            return;
+        }
+        Integer count = jdbcTemplate.queryForObject(
+                "SELECT COUNT(*) FROM workflow_cancellations WHERE id = ? OR workflow_id = ?",
+                Integer.class,
+                cancellation.id(),
+                cancellation.workflowId()
+        );
+        if (count != null && count > 0) {
+            jdbcTemplate.update(
+                    "UPDATE workflow_cancellations SET cancelled_by = ?, reason = ?, cancelled_at = ? WHERE workflow_id = ?",
+                    cancellation.cancelledBy(),
+                    cancellation.reason(),
+                    Timestamp.from(cancellation.cancelledAt()),
+                    cancellation.workflowId()
+            );
+        } else {
+            jdbcTemplate.update(
+                    "INSERT INTO workflow_cancellations (id, workflow_id, cancelled_by, reason, cancelled_at) VALUES (?, ?, ?, ?, ?)",
+                    cancellation.id(),
+                    cancellation.workflowId(),
+                    cancellation.cancelledBy(),
+                    cancellation.reason(),
+                    Timestamp.from(cancellation.cancelledAt())
+            );
+        }
+    }
+
+    private static class CancellationRowMapper implements RowMapper<WorkflowCancellation> {
+        @Override
+        public WorkflowCancellation mapRow(ResultSet rs, int rowNum) throws SQLException {
+            return new WorkflowCancellation(
+                    rs.getString("id"),
+                    rs.getString("workflow_id"),
+                    rs.getString("cancelled_by"),
+                    rs.getString("reason"),
+                    toInstant(rs.getTimestamp("cancelled_at"))
             );
         }
     }

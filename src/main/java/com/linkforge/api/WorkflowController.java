@@ -1,6 +1,7 @@
 package com.linkforge.api;
 
 import com.linkforge.api.dto.CreateWorkflowRequest;
+import com.linkforge.api.dto.StopWorkflowRequest;
 import com.linkforge.api.dto.SubmitApprovalRequest;
 import com.linkforge.api.dto.SubmitClarificationRequest;
 import com.linkforge.api.dto.WorkflowResponse;
@@ -74,6 +75,24 @@ public class WorkflowController {
         authorizationService.authorizePlanApproval(authHeader, tokenHeader);
         String approver = authorizationService.resolveApprover(actorHeader, request.approver());
         return orchestrator.approvePlan(id, request.decision(), request.planHash(), approver, request.comments())
+                .map(run -> ResponseEntity.ok(WorkflowResponse.from(run)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping({ "/{id}/cancel", "/{id}/stop" })
+    public ResponseEntity<WorkflowResponse> cancelWorkflow(
+            @PathVariable String id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Auth-Token", required = false) String tokenHeader,
+            @RequestHeader(value = "X-Actor-Id", required = false) String actorHeader,
+            @RequestBody(required = false) StopWorkflowRequest request
+    ) {
+        authorizationService.authorizeCancellation(authHeader, tokenHeader);
+        String bodyRequester = request != null ? request.requestedBy() : null;
+        String reason = request != null ? request.reason() : null;
+        String canceller = authorizationService.resolveCanceller(actorHeader, bodyRequester);
+
+        return orchestrator.cancelWorkflow(id, canceller, reason)
                 .map(run -> ResponseEntity.ok(WorkflowResponse.from(run)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }

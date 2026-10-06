@@ -38,6 +38,17 @@ public class WorkflowAuthorizationService {
         }
     }
 
+    public void authorizeCancellation(String authHeader, String tokenHeader) {
+        if (!securityProperties.isEnabled()) {
+            return;
+        }
+
+        String presentedToken = extractToken(authHeader, tokenHeader);
+        if (presentedToken == null || !secureEquals(presentedToken, securityProperties.getCancellationToken())) {
+            throw new WorkflowAuthorizationException("Unauthorized: Valid cancellation authorization token is required.");
+        }
+    }
+
     public String resolveSubmitter(String headerSubmitter, String bodySubmitter) {
         if (bodySubmitter != null && !bodySubmitter.isBlank()) {
             return bodySubmitter.trim();
@@ -56,6 +67,16 @@ public class WorkflowAuthorizationService {
             return headerApprover.trim();
         }
         return securityProperties.getDefaultApprover();
+    }
+
+    public String resolveCanceller(String headerCanceller, String bodyCanceller) {
+        if (bodyCanceller != null && !bodyCanceller.isBlank()) {
+            return bodyCanceller.trim();
+        }
+        if (headerCanceller != null && !headerCanceller.isBlank()) {
+            return headerCanceller.trim();
+        }
+        return securityProperties.getDefaultCanceller();
     }
 
     private String extractToken(String authHeader, String tokenHeader) {

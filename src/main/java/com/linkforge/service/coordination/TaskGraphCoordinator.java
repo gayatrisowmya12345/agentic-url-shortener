@@ -29,6 +29,8 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
+import com.linkforge.service.retry.FailureClassifier;
 
 @Service
 public class TaskGraphCoordinator {
@@ -58,6 +60,18 @@ public class TaskGraphCoordinator {
             Scenario scenario,
             RepositoryEvidence evidence
     ) {
+        return coordinate(tasks, requirement, acceptanceCriteria, scenario, evidence, List.of(), () -> false);
+    }
+
+    public CoordinationResult coordinate(
+            List<PlannedTask> tasks,
+            String requirement,
+            List<String> acceptanceCriteria,
+            Scenario scenario,
+            RepositoryEvidence evidence,
+            List<SpecialistInvocation> priorInvocations,
+            BooleanSupplier isCancelled
+    ) {
         if (tasks == null || tasks.isEmpty()) {
             return new CoordinationResult(List.of(), List.of(), true, 0, 0, 0);
         }
@@ -76,6 +90,13 @@ public class TaskGraphCoordinator {
         int concurrency = Math.max(1, properties.getMaxConcurrency());
         ExecutorService executor = Executors.newFixedThreadPool(concurrency);
 
+        Map<String, SpecialistInvocation> priorInvocationMap = new HashMap<>();
+        if (priorInvocations != null) {
+            for (SpecialistInvocation inv : priorInvocations) {
+                priorInvocationMap.put(inv.taskId(), inv);
+            }
+        }
+
         Map<String, SpecialistTaskResult> taskResults = new ConcurrentHashMap<>();
         Map<String, String> dependencySummaries = new ConcurrentHashMap<>();
         Set<String> completedTaskIds = Collections.synchronizedSet(new HashSet<>());
@@ -85,13 +106,31 @@ public class TaskGraphCoordinator {
         Map<String, PlannedTask> taskMap = new HashMap<>();
 
         for (PlannedTask task : tasks) {
-            pendingTaskIds.add(task.taskId());
             taskMap.put(task.taskId(), task);
+            if ("COMPLETED".equalsIgnoreCase(task.status())) {
+                completedTaskIds.add(task.taskId());
+                SpecialistInvocation prior = priorInvocationMap.get(task.taskId());
+                if (prior != null && prior.outputSummary() != null) {
+                    dependencySummaries.put(task.taskId(), prior.outputSummary());
+                } else {
+                    dependencySummaries.put(task.taskId(), task.description() != null ? task.description() : "");
+                }
+            } else {
+                pendingTaskIds.add(task.taskId());
+            }
         }
+
+        boolean cancelled = false;
 
         try {
             // 4. Wave-based topological execution with concurrency
             while (!pendingTaskIds.isEmpty()) {
+                if (isCancelled != null && isCancelled.getAsBoolean()) {
+                    log.info("Cancellation detected; stopping task dispatch.");
+                    cancelled = true;
+                    break;
+                }
+
                 // Find all tasks whose dependencies are satisfied
                 List<PlannedTask> readyTasks = new ArrayList<>();
                 for (String taskId : pendingTaskIds) {
@@ -164,24 +203,34 @@ public class TaskGraphCoordinator {
                         result = future.get(properties.getTaskTimeoutSeconds(), TimeUnit.SECONDS);
                     } catch (TimeoutException te) {
                         log.warn("Specialist task {} timed out after {}s", readyTask.taskId(), properties.getTaskTimeoutSeconds());
-                        SpecialistAgent agent = specialistRegistry.resolveAgentForTask(readyTask);
-                        result = new SpecialistTaskResult(
+                        List<SpecialistInvocation> partialInvs = buildInvocationsSoFar(tasks, completedTaskIds, taskResults, priorInvocationMap);
+                        List<PlannedTask> partialTasks = buildTasksSoFar(tasks, completedTaskIds, failedTaskIds);
+                        throw new TransientCoordinationException(
+                                "Specialist task " + readyTask.taskId() + " timed out after " + properties.getTaskTimeoutSeconds() + " seconds.",
+                                te,
                                 readyTask.taskId(),
-                                agent.getRole(),
-                                agent.getAgentName(),
-                                "FAILED",
-                                "Task timed out after " + properties.getTaskTimeoutSeconds() + " seconds.",
-                                List.of(),
-                                List.of(),
-                                List.of(),
-                                Map.of("timeout", true),
-                                true,
-                                "TimeoutException",
-                                Instant.now(),
-                                Instant.now()
+                                partialInvs,
+                                partialTasks
                         );
                     } catch (Exception ex) {
-                        log.warn("Specialist task {} encountered execution error: {}", readyTask.taskId(), ex.getMessage());
+                        Throwable cause = (ex instanceof java.util.concurrent.ExecutionException && ex.getCause() != null)
+                                ? ex.getCause()
+                                : ex;
+
+                        if (FailureClassifier.isTransient(cause)) {
+                            log.warn("Specialist task {} encountered transient error: {}", readyTask.taskId(), cause.getMessage());
+                            List<SpecialistInvocation> partialInvs = buildInvocationsSoFar(tasks, completedTaskIds, taskResults, priorInvocationMap);
+                            List<PlannedTask> partialTasks = buildTasksSoFar(tasks, completedTaskIds, failedTaskIds);
+                            throw new TransientCoordinationException(
+                                    "Specialist task " + readyTask.taskId() + " failed with transient error: " + cause.getMessage(),
+                                    cause,
+                                    readyTask.taskId(),
+                                    partialInvs,
+                                    partialTasks
+                            );
+                        }
+
+                        log.warn("Specialist task {} encountered non-transient execution error: {}", readyTask.taskId(), ex.getMessage());
                         SpecialistAgent agent = specialistRegistry.resolveAgentForTask(readyTask);
                         result = new SpecialistTaskResult(
                                 readyTask.taskId(),
@@ -225,12 +274,20 @@ public class TaskGraphCoordinator {
         List<SpecialistInvocation> invocations = new ArrayList<>();
         List<PlannedTask> updatedTasks = new ArrayList<>();
 
+        if (isCancelled != null && isCancelled.getAsBoolean()) {
+            cancelled = true;
+        }
+
         for (PlannedTask originalTask : tasks) {
             String taskId = originalTask.taskId();
             if (completedTaskIds.contains(taskId)) {
-                SpecialistTaskResult res = taskResults.get(taskId);
-                SpecialistInvocation inv = boundAndCreateInvocation(res, originalTask.title());
-                invocations.add(inv);
+                if (taskResults.containsKey(taskId)) {
+                    SpecialistTaskResult res = taskResults.get(taskId);
+                    SpecialistInvocation inv = boundAndCreateInvocation(res, originalTask.title());
+                    invocations.add(inv);
+                } else if (priorInvocationMap.containsKey(taskId)) {
+                    invocations.add(priorInvocationMap.get(taskId));
+                }
                 updatedTasks.add(originalTask.withStatus("COMPLETED"));
             } else if (failedTaskIds.contains(taskId)) {
                 SpecialistTaskResult res = taskResults.get(taskId);
@@ -238,12 +295,13 @@ public class TaskGraphCoordinator {
                 invocations.add(inv);
                 updatedTasks.add(originalTask.withStatus("FAILED"));
             } else {
-                // Task was skipped due to prerequisite failure
-                updatedTasks.add(originalTask.withStatus("SKIPPED"));
+                // Task was skipped or cancelled
+                String targetStatus = cancelled ? "CANCELLED" : "SKIPPED";
+                updatedTasks.add(originalTask.withStatus(targetStatus));
             }
         }
 
-        boolean allSuccessful = failedTaskIds.isEmpty() && skippedTaskIds.isEmpty();
+        boolean allSuccessful = failedTaskIds.isEmpty() && skippedTaskIds.isEmpty() && !cancelled;
         return new CoordinationResult(
                 invocations,
                 updatedTasks,
@@ -252,6 +310,43 @@ public class TaskGraphCoordinator {
                 failedTaskIds.size(),
                 skippedTaskIds.size()
         );
+    }
+
+    private List<SpecialistInvocation> buildInvocationsSoFar(
+            List<PlannedTask> tasks,
+            Set<String> completedTaskIds,
+            Map<String, SpecialistTaskResult> taskResults,
+            Map<String, SpecialistInvocation> priorInvocationMap
+    ) {
+        List<SpecialistInvocation> result = new ArrayList<>();
+        for (PlannedTask t : tasks) {
+            if (completedTaskIds.contains(t.taskId())) {
+                if (taskResults.containsKey(t.taskId())) {
+                    result.add(boundAndCreateInvocation(taskResults.get(t.taskId()), t.title()));
+                } else if (priorInvocationMap.containsKey(t.taskId())) {
+                    result.add(priorInvocationMap.get(t.taskId()));
+                }
+            }
+        }
+        return result;
+    }
+
+    private List<PlannedTask> buildTasksSoFar(
+            List<PlannedTask> tasks,
+            Set<String> completedTaskIds,
+            Set<String> failedTaskIds
+    ) {
+        List<PlannedTask> result = new ArrayList<>();
+        for (PlannedTask t : tasks) {
+            if (completedTaskIds.contains(t.taskId())) {
+                result.add(t.withStatus("COMPLETED"));
+            } else if (failedTaskIds.contains(t.taskId())) {
+                result.add(t.withStatus("FAILED"));
+            } else {
+                result.add(t);
+            }
+        }
+        return result;
     }
 
     private SpecialistInvocation boundAndCreateInvocation(SpecialistTaskResult result, String taskTitle) {

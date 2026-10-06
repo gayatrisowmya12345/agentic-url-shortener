@@ -88,6 +88,29 @@ LinkForge enforces governance gates at key transition points in the workflow:
 
 ---
 
+### Bounded Failure Recovery & Safe Stop (Cancellation)
+
+LinkForge provides resilient stage execution and graceful workflow termination:
+
+1. **Bounded Exponential Backoff & Transient Retries**:
+   - Stage executions are guarded with bounded retry policies configured via `linkforge.workflow.retry.*`.
+   - Failures are classified explicitly into `TRANSIENT` (e.g., model rate limits, transient network I/O, connect timeouts) and `NON_RETRYABLE` (e.g., invalid inputs, path traversal, security failures, plan rejection).
+   - Only eligible transient failures are retried using bounded exponential backoff (`delay = min(initial * multiplier^(attempt-1), max)`). Non-retryable errors fail immediately without retry loops.
+   - Completed specialist work and side effects are preserved across retries—previously succeeded tasks are not re-executed.
+   - Every retry attempt, failure classification, delay, and outcome is recorded in workflow audit history.
+   - When configured attempts are exhausted, the workflow transitions to `FAILED` with actionable diagnosis.
+
+2. **Authorized Safe Stop & Workflow Cancellation**:
+   - Workflows can be safely stopped at any phase: before work starts (`INITIALIZED`), while awaiting clarification or approval, and during active multi-agent execution.
+   - Protected by authorization token verification (`X-Auth-Token` or `Authorization: Bearer <token>`).
+   - Stop requests are idempotent; repeat cancellations on already-cancelled runs return the current state safely.
+   - Once accepted, no new work or specialist tasks are dispatched. In-flight worker threads are cleanly interrupted and shut down.
+   - The workflow moves to the terminal `CANCELLED` status, which permanently blocks any subsequent execution, clarification, or plan approval attempts.
+   - Stop requests against already completed, failed, or rejected workflows are rejected with HTTP 409 Conflict.
+   - The cancellation identity (`cancelledBy`), timestamp, reason, and execution stage are permanently recorded in audit history.
+
+---
+
 ## Workflow Lifecycle & States
 
 ### Workflow States (`WorkflowStatus`)
@@ -98,6 +121,7 @@ LinkForge enforces governance gates at key transition points in the workflow:
 - `REJECTED`: Plan rejected by human approver; execution terminated.
 - `COMPLETED`: Plan approved and all specialist tasks coordinated successfully.
 - `FAILED`: Execution terminated due to unrecoverable error.
+- `CANCELLED`: Execution safely stopped; terminal state blocking subsequent transitions or resume.
 
 ### Workflow Stages (`WorkflowStage`)
 - `REQUIREMENT_ANALYSIS`: Requirement interpretation and criteria extraction.
@@ -112,12 +136,23 @@ LinkForge enforces governance gates at key transition points in the workflow:
 
 ## Configuration Reference
 
-### Workflow Security & Approval Gates (`application.properties`)
+### Workflow Security & Governance Gates (`application.properties`)
 | Property | Environment Variable | Default | Description |
 | :--- | :--- | :--- | :--- |
-| `linkforge.workflow.security.enabled` | `LINKFORGE_WORKFLOW_SECURITY_ENABLED` | `false` | Enable authorization token checks for clarification and approval endpoints |
+| `linkforge.workflow.security.enabled` | `LINKFORGE_WORKFLOW_SECURITY_ENABLED` | `false` | Enable authorization token checks for clarification, approval, and cancellation endpoints |
 | `linkforge.workflow.security.clarification-token` | `LINKFORGE_WORKFLOW_CLARIFICATION_TOKEN` | `dev-clarification-token` | Shared secret token required for clarification submission |
 | `linkforge.workflow.security.approval-token` | `LINKFORGE_WORKFLOW_APPROVAL_TOKEN` | `dev-approval-token` | Shared secret token required for human plan approval submission |
+| `linkforge.workflow.security.cancellation-token` | `LINKFORGE_WORKFLOW_CANCELLATION_TOKEN` | `dev-cancellation-token` | Shared secret token required for workflow cancellation/stop |
+| `linkforge.workflow.security.default-canceller` | `LINKFORGE_WORKFLOW_DEFAULT_CANCELLER` | `operator` | Fallback canceller identifier when not explicitly provided |
+
+### Bounded Retry & Failure Recovery (`application.properties`)
+| Property | Environment Variable | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `linkforge.workflow.retry.enabled` | `LINKFORGE_WORKFLOW_RETRY_ENABLED` | `true` | Enable bounded retries for transient stage failures |
+| `linkforge.workflow.retry.max-attempts` | `LINKFORGE_WORKFLOW_RETRY_MAX_ATTEMPTS` | `3` | Maximum execution attempts for transient errors before failing |
+| `linkforge.workflow.retry.initial-backoff-ms` | `LINKFORGE_WORKFLOW_RETRY_INITIAL_BACKOFF_MS` | `500` | Initial backoff delay in milliseconds |
+| `linkforge.workflow.retry.max-backoff-ms` | `LINKFORGE_WORKFLOW_RETRY_MAX_BACKOFF_MS` | `5000` | Maximum cap on exponential backoff delay in milliseconds |
+| `linkforge.workflow.retry.backoff-multiplier` | `LINKFORGE_WORKFLOW_RETRY_BACKOFF_MULTIPLIER` | `2.0` | Exponential backoff multiplier per retry attempt |
 
 ### Specialist Coordination (`application.properties`)
 | Property | Environment Variable | Default | Description |
@@ -302,6 +337,38 @@ X-Clarification-Token: dev-clarification-token
 
 ---
 
+### 3. Safe Stop / Workflow Cancellation
+
+**Request Safe Stop (`POST /api/v1/workflows/{id}/cancel` or `POST /api/v1/workflows/{id}/stop`)**:
+```http
+POST /api/v1/workflows/9bf281d2-a720-4b8c-b0cf-5b1b467dbb22/cancel
+Content-Type: application/json
+X-Auth-Token: dev-cancellation-token
+
+{
+  "reason": "Scope superseded by updated product requirements",
+  "requestedBy": "ops-lead@example.com"
+}
+```
+
+**Response (200 OK - Workflow Safely Cancelled)**:
+```json
+{
+  "id": "9bf281d2-a720-4b8c-b0cf-5b1b467dbb22",
+  "requirement": "make links faster and safer",
+  "scenario": "AMBIGUOUS",
+  "status": "CANCELLED",
+  "currentStage": "REQUIREMENT_ANALYSIS",
+  "cancellation": {
+    "cancelledBy": "ops-lead@example.com",
+    "reason": "Scope superseded by updated product requirements",
+    "cancelledAt": "2026-10-06T15:30:00Z"
+  }
+}
+```
+
+---
+
 ## URL Shortener API
 
 - `POST /api/v1/links`: Shorten a valid HTTP/HTTPS URL with optional custom alias (`201 Created`).
@@ -315,5 +382,12 @@ X-Clarification-Token: dev-clarification-token
 Execute the complete automated test suite without external dependencies:
 
 ```bash
+# Run all verification tests
 ./mvnw clean verify
+
+# Run Milestone 7 bounded retry and cancellation service tests
+./mvnw test -Dtest=WorkflowRetryAndCancellationServiceTest
+
+# Run Milestone 7 safe stop and cancellation API integration tests
+./mvnw test -Dtest=WorkflowRetryAndCancellationIntegrationTest
 ```

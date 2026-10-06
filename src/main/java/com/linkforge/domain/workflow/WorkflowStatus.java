@@ -7,5 +7,10 @@ public enum WorkflowStatus {
     WAITING_FOR_APPROVAL,
     REJECTED,
     COMPLETED,
-    FAILED
+    FAILED,
+    CANCELLED;
+
+    public boolean isTerminal() {
+        return this == COMPLETED || this == FAILED || this == REJECTED || this == CANCELLED;
+    }
 }

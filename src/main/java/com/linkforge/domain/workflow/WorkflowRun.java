@@ -36,6 +36,7 @@ public class WorkflowRun {
     private final List<SpecialistInvocation> specialistInvocations = new ArrayList<>();
     private final List<WorkflowClarification> clarificationHistory = new ArrayList<>();
     private WorkflowApproval approval;
+    private WorkflowCancellation cancellation;
 
     public WorkflowRun(String requirement) {
         this(requirement, null);
@@ -141,6 +142,25 @@ public class WorkflowRun {
 
     public synchronized WorkflowApproval getApproval() {
         return approval;
+    }
+
+    public synchronized void setCancellation(WorkflowCancellation cancellation) {
+        this.cancellation = cancellation;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized WorkflowCancellation getCancellation() {
+        return cancellation;
+    }
+
+    public synchronized boolean isCancelled() {
+        return this.status == WorkflowStatus.CANCELLED;
+    }
+
+    public synchronized void cancel(WorkflowCancellation cancellation) {
+        this.status = WorkflowStatus.CANCELLED;
+        this.cancellation = cancellation;
+        this.updatedAt = Instant.now();
     }
 
     public synchronized String getCurrentPlanHash() {
