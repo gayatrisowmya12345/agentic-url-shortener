@@ -19,6 +19,48 @@
 *.tar.gz
 *.rar
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
+# Virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
 hs_err_pid*
 replay_pid*
+
+# Maven & Gradle build output
+target/
+build/
+out/
+!.mvn/wrapper/maven-wrapper.properties
+
+# Maven wrapper jar if generated
+.mvn/wrapper/maven-wrapper.jar
+
+# IDE files
+.idea/
+*.iml
+*.iws
+*.ipr
+.vscode/
+.classpath
+.project
+.settings/
+.factorypath
+.springBeans
+.sts4-cache
+.apt_generated
+
+# Local environment secrets and configuration
+*.env
+.env*
+!.env.example
+*.key
+*.pem
+*.secret
+secrets.*
+application-local.properties
+application-local.yml
+application-local.yaml
+application-secret.properties
+application-secret.yml
+application-secret.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
