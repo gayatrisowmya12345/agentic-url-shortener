@@ -117,6 +117,15 @@ LinkForge provides resilient stage execution and graceful workflow termination:
    - Read-only operator observability APIs (`/history`, `/evidence`, `/summary`) protected by token authorization (`X-Operator-Token`, `X-Auth-Token`, or `Authorization: Bearer <token>`).
    - Secret-redaction safeguards: tokens, credentials, full LLM prompts, and raw secret payloads are strictly excluded from audit events and API responses.
 
+4. **Repeatable Scenario Runs & End-to-End Workbench Validation**:
+   - Repeatable automated scenarios exercise the entire multi-agent pipeline through public HTTP endpoints with isolated, disposable fixtures.
+   - **Scenario 1 (Greenfield URL Shortener)**: Requirement interpretation, greenfield classification, dependency-aware DAG task synthesis, human plan approval, concurrent specialist coordination, and audit trail generation.
+   - **Scenario 2 (Ambiguous Requirement & Clarification Gate)**: Ambiguity detection, targeted clarification questions, operator clarification submission, revision tracking (revision 2), and pipeline continuation.
+   - **Scenario 3 (Brownfield Repository Inspection)**: Safe read-only inspection of disposable repository fixture within approved root, language/framework fingerprinting, and backward-compatible task planning without exposing local host paths.
+   - **Scenario 4 (Human Approval Governance Gate)**: Human-in-the-loop plan review, SHA-256 plan hash tamper protection, rejection handling with terminal lock, and token-based authorization.
+   - **Scenario 5 (Transient Failure Recovery & Safe Stop)**: Demonstrates automatic bounded retry recovery from a transient stage failure (5a, asserting retry attempts, failure classification, and success events) as well as operator safe stop (5b, immediate cancellation, blocking subsequent actions, and idempotent responses).
+   - **Scenario 6 (Optional Live Ollama Execution)**: Seamless support for live model-backed analysis when local Ollama is available, with automatic graceful skip when offline.
+
 ---
 
 ## Workflow Lifecycle & States
@@ -570,21 +579,57 @@ X-Operator-Token: dev-operator-token
 
 ## Local Verification & Testing
 
-Execute the complete automated test suite without external dependencies:
+### Repeatable End-to-End Scenarios (Milestone 9)
+
+Run the automated scenario test suite or executable script to verify all end-to-end agentic workflows through public APIs:
+
+```bash
+# Run Milestone 9 repeatable scenario integration tests (includes all 6 scenarios)
+./mvnw test -Dtest=RepeatableWorkflowScenariosIntegrationTest
+
+# Or run via the automated scenario runner script
+./scripts/run-scenarios.sh
+```
+
+#### Offline vs. Live Ollama Execution
+- **Offline / Deterministic (Default)**: All scenarios run 100% offline without requiring Ollama or external models. Scenarios 1–5 utilize LinkForge's deterministic specialists and scenario classifiers, guaranteeing fast, repeatable, deterministic passes in any CI/CD environment.
+- **Optional Live Ollama Execution**: Scenario 6 detects whether Ollama is active locally at `http://localhost:11434` with `llama3.2`.
+  - When Ollama is available, it dynamically dispatches live prompts and verifies real model-backed analysis through Spring AI.
+  - When Ollama is offline or unavailable, Scenario 6 gracefully skips (`Assumptions.assumeTrue(...)`), ensuring builds remain green without hard external dependencies.
+
+#### Expected Observable Outcomes
+| Scenario | Public API Action | Expected Outcome | Observable Gate / State |
+| :--- | :--- | :--- | :--- |
+| **1. Greenfield Shortener** | `POST /api/v1/workflows` &rarr; `POST .../approve` | Analyzed, planned into 5 tasks, approved, and coordinated | Status `COMPLETED`, Stage `FINISHED`, 5 specialist invocations, full audit history |
+| **2. Ambiguous Clarification** | `POST /api/v1/workflows` &rarr; `POST .../clarifications` | Ambiguity detected with questions, clarified, revision incremented | Status `WAITING_FOR_CLARIFICATION` &rarr; revision 2 &rarr; `WAITING_FOR_APPROVAL` &rarr; `COMPLETED` |
+| **3. Brownfield Inspection** | `POST /api/v1/workflows` (with `repositoryPath`) | Safe read-only inspection extracts file stats & languages from disposable fixture | `codebaseEvidenceAvailable=true`, local host paths omitted, status `COMPLETED` |
+| **4. Human Approval Gate** | `POST /api/v1/workflows` &rarr; `POST .../approve` (rejection) | Blocked in `WAITING_FOR_APPROVAL`, tampered hash rejected (400), rejected plan permanently locked | Status `REJECTED`, Stage `PLAN_APPROVAL`, subsequent actions return 409 Conflict |
+| **5a. Transient Retry Recovery** | `POST /api/v1/workflows` &rarr; `POST .../approve` | Transient stage failure automatically retried with backoff, recovered on attempt 2, and coordinated to completion | Status `WAITING_FOR_APPROVAL` &rarr; `COMPLETED`, audit events `STAGE_TRANSIENT_FAILURE`, `STAGE_RETRY_SCHEDULED`, `STAGE_RETRY_SUCCEEDED` |
+| **5b. Safe Stop / Cancellation** | `POST /api/v1/workflows` &rarr; `POST .../cancel` | Immediate interruption, stop record captured, subsequent actions blocked | Status `CANCELLED`, `cancellation` recorded, audit event `WORKFLOW_CANCELLED` |
+| **6. Live Ollama Run (Optional)** | `POST /api/v1/workflows` &rarr; `POST .../approve` | Live model invocation via Ollama when active; gracefully skipped when offline | Model-backed decisions recorded, status `COMPLETED` |
+
+---
+
+### Complete Project Verification
+
+Execute the complete automated test suite across all milestones:
 
 ```bash
 # Run all verification tests
 ./mvnw clean verify
 
-# Run Milestone 7 bounded retry and cancellation service tests
-./mvnw test -Dtest=WorkflowRetryAndCancellationServiceTest
-
-# Run Milestone 7 safe stop and cancellation API integration tests
-./mvnw test -Dtest=WorkflowRetryAndCancellationIntegrationTest
+# Run Milestone 9 repeatable scenario integration tests
+./mvnw test -Dtest=RepeatableWorkflowScenariosIntegrationTest
 
 # Run Milestone 8 workflow evidence and observability service tests
 ./mvnw test -Dtest=WorkflowEvidenceAndObservabilityServiceTest
 
 # Run Milestone 8 operator observability API integration tests
 ./mvnw test -Dtest=WorkflowEvidenceAndObservabilityIntegrationTest
+
+# Run Milestone 7 bounded retry and cancellation service tests
+./mvnw test -Dtest=WorkflowRetryAndCancellationServiceTest
+
+# Run Milestone 7 safe stop and cancellation API integration tests
+./mvnw test -Dtest=WorkflowRetryAndCancellationIntegrationTest
 ```
