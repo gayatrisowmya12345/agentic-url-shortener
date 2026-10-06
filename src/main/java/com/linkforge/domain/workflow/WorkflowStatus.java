@@ -4,6 +4,8 @@ public enum WorkflowStatus {
     CREATED,
     IN_PROGRESS,
     WAITING_FOR_CLARIFICATION,
+    WAITING_FOR_APPROVAL,
+    REJECTED,
     COMPLETED,
     FAILED
 }

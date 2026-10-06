@@ -64,7 +64,60 @@ For brownfield requests, LinkForge inspects the target repository with rigorous 
 
 ---
 
+---
+
+### Requirement Clarification & Human Approval Gates
+
+LinkForge enforces governance gates at key transition points in the workflow:
+
+1. **Clarification Gate (`WAITING_FOR_CLARIFICATION`)**:
+   - If requirement analysis detects ambiguity or unanswered questions, workflow execution pauses immediately.
+   - Final task planning and specialist coordination are blocked while clarification is pending.
+   - An operator submits clarification with submitter identity (`submittedBy`).
+   - Blank or incomplete clarification attempts are rejected.
+   - The workflow re-runs requirement analysis against the cumulative requirement history; it resumes only once requirements are sufficiently clear.
+
+2. **Human Plan Approval Gate (`WAITING_FOR_APPROVAL`)**:
+   - Once a clear requirement generates a task plan, execution pauses before specialist coordination.
+   - A cryptographic SHA-256 `planHash` is computed over task identifiers, titles, descriptions, roles, and dependency edges.
+   - An authorized human approver submits a decision (`APPROVED` or `REJECTED`), their identity (`approver`), comments, and the exact `planHash` reviewed.
+   - Submissions with missing, mismatched, or stale hashes are rejected.
+   - If rejected, the workflow transitions to `REJECTED` and halts execution.
+   - If the task plan changes after an approval, the prior approval is immediately invalidated and a new approval is required.
+   - Duplicate or repeat submissions are handled safely and idempotently without state corruption.
+
+---
+
+## Workflow Lifecycle & States
+
+### Workflow States (`WorkflowStatus`)
+- `INITIALIZED`: Workflow instance created.
+- `IN_PROGRESS`: Actively executing analysis or coordination.
+- `WAITING_FOR_CLARIFICATION`: Paused awaiting operator clarification.
+- `WAITING_FOR_APPROVAL`: Plan generated; paused awaiting human plan approval.
+- `REJECTED`: Plan rejected by human approver; execution terminated.
+- `COMPLETED`: Plan approved and all specialist tasks coordinated successfully.
+- `FAILED`: Execution terminated due to unrecoverable error.
+
+### Workflow Stages (`WorkflowStage`)
+- `REQUIREMENT_ANALYSIS`: Requirement interpretation and criteria extraction.
+- `SCENARIO_CLASSIFICATION`: Greenfield vs. brownfield vs. ambiguous classification.
+- `CODEBASE_INSPECTION`: Safe, read-only evidence gathering for brownfield workflows.
+- `TASK_PLANNING`: Dependency-aware task graph synthesis and plan hash computation.
+- `PLAN_APPROVAL`: Human governance gate prior to specialist dispatch.
+- `SPECIALIST_COORDINATION`: Concurrent topological execution of specialist agents.
+- `FINISHED`: Terminal stage following completion or rejection.
+
+---
+
 ## Configuration Reference
+
+### Workflow Security & Approval Gates (`application.properties`)
+| Property | Environment Variable | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `linkforge.workflow.security.enabled` | `LINKFORGE_WORKFLOW_SECURITY_ENABLED` | `false` | Enable authorization token checks for clarification and approval endpoints |
+| `linkforge.workflow.security.clarification-token` | `LINKFORGE_WORKFLOW_CLARIFICATION_TOKEN` | `dev-clarification-token` | Shared secret token required for clarification submission |
+| `linkforge.workflow.security.approval-token` | `LINKFORGE_WORKFLOW_APPROVAL_TOKEN` | `dev-approval-token` | Shared secret token required for human plan approval submission |
 
 ### Specialist Coordination (`application.properties`)
 | Property | Environment Variable | Default | Description |
@@ -97,7 +150,8 @@ For brownfield requests, LinkForge inspects the target repository with rigorous 
 
 ## Workflow API Examples
 
-### 1. Create Greenfield Workflow with Specialist Coordination
+### 1. Create Greenfield Workflow & Human Plan Approval Gate
+
 ```http
 POST /api/v1/workflows
 Content-Type: application/json
@@ -106,14 +160,17 @@ Content-Type: application/json
   "requirement": "Build a greenfield URL shortener service with Base62 encoding and click tracking"
 }
 ```
-**Response (201 Created)**:
+
+**Response (201 Created - Paused for Plan Approval)**:
 ```json
 {
   "id": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
   "requirement": "Build a greenfield URL shortener service with Base62 encoding and click tracking",
+  "originalRequirement": "Build a greenfield URL shortener service with Base62 encoding and click tracking",
   "scenario": "GREENFIELD",
-  "status": "COMPLETED",
-  "currentStage": "FINISHED",
+  "status": "WAITING_FOR_APPROVAL",
+  "currentStage": "PLAN_APPROVAL",
+  "planHash": "3f8b1c4a...",
   "acceptanceCriteria": [
     "AC-1: Given a valid HTTP or HTTPS destination URL, when a short link is requested, then a unique short token is generated",
     "AC-2: Given an existing short token or custom alias, when a redirect is requested, then the service issues an HTTP 302 redirect",
@@ -124,79 +181,70 @@ Content-Type: application/json
       "taskId": "TASK-1",
       "title": "Core Domain Models & Thread-Safe Store",
       "dependencies": [],
-      "status": "COMPLETED",
+      "status": "PENDING",
       "specialistRole": "DATA_PERSISTENCE"
     },
     {
       "taskId": "TASK-2",
       "title": "URL Validation & Scheme Sanitization Engine",
       "dependencies": ["TASK-1"],
-      "status": "COMPLETED",
+      "status": "PENDING",
       "specialistRole": "SECURITY_VALIDATION"
-    },
-    {
-      "taskId": "TASK-3",
-      "title": "Collision-Free Token Generator",
-      "dependencies": ["TASK-1"],
-      "status": "COMPLETED",
-      "specialistRole": "API_BEHAVIOR"
-    },
-    {
-      "taskId": "TASK-4",
-      "title": "Redirection Controller & Atomic Analytics",
-      "dependencies": ["TASK-2", "TASK-3"],
-      "status": "COMPLETED",
-      "specialistRole": "API_BEHAVIOR"
-    },
-    {
-      "taskId": "TASK-5",
-      "title": "Automated Verification Suite",
-      "dependencies": ["TASK-4"],
-      "status": "COMPLETED",
-      "specialistRole": "TESTING_QUALITY"
-    }
-  ],
-  "specialistInvocations": [
-    {
-      "invocationId": "3b29c92a-...",
-      "taskId": "TASK-1",
-      "agentName": "data-persistence-specialist",
-      "role": "DATA_PERSISTENCE",
-      "status": "SUCCESS",
-      "inputSummary": "Task TASK-1: Core Domain Models & Thread-Safe Store",
-      "outputSummary": "Data Persistence analysis for TASK-1: Structured relational constraints and thread-safe persistence guarantees.",
-      "recommendations": [
-        "Establish embedded H2 relational schema with dedicated tables: 'links' and 'click_events'.",
-        "Apply unique database constraints on token and custom_alias.",
-        "Use Spring JdbcTemplate with atomic update queries to prevent race conditions."
-      ],
-      "testIdeas": [
-        "Verify database constraint enforcement rejecting duplicate token or alias insertion.",
-        "Test concurrent redirect clicks asserting accurate click count tally in H2 database."
-      ],
-      "addressedCriteria": ["AC-1", "AC-2"],
-      "provider": "deterministic",
-      "model": "rules",
-      "fallbackOccurred": false,
-      "startedAt": "2026-10-06T18:50:00Z",
-      "completedAt": "2026-10-06T18:50:00Z"
     }
   ]
 }
 ```
 
-### 2. Create Brownfield Workflow with Codebase Inspection
+**Approve the Plan (`POST /api/v1/workflows/{id}/approve`)**:
 ```http
-POST /api/v1/workflows
+POST /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/approve
 Content-Type: application/json
+X-Approval-Token: dev-approval-token
 
 {
-  "requirement": "Refactor the existing repository to enhance link storage and database queries",
-  "repositoryPath": "./"
+  "decision": "APPROVED",
+  "planHash": "3f8b1c4a...",
+  "approver": "lead-architect@example.com",
+  "comments": "Plan verified for milestone 6 delivery."
 }
 ```
 
-### 3. Handle Ambiguous Requirement & Submit Clarification
+**Response (200 OK - Approved and Specialist Coordination Executed)**:
+```json
+{
+  "id": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
+  "status": "COMPLETED",
+  "currentStage": "FINISHED",
+  "planHash": "3f8b1c4a...",
+  "approval": {
+    "approver": "lead-architect@example.com",
+    "decision": "APPROVED",
+    "planHash": "3f8b1c4a...",
+    "comments": "Plan verified for milestone 6 delivery.",
+    "reviewedAt": "2026-10-06T15:20:00Z"
+  },
+  "tasks": [
+    {
+      "taskId": "TASK-1",
+      "status": "COMPLETED",
+      "specialistRole": "DATA_PERSISTENCE"
+    }
+  ],
+  "specialistInvocations": [
+    {
+      "taskId": "TASK-1",
+      "status": "SUCCESS",
+      "agentName": "data-persistence-specialist"
+    }
+  ]
+}
+```
+
+---
+
+### 2. Ambiguous Requirement & Operator Clarification Gate
+
+**Submit Ambiguous Requirement**:
 ```http
 POST /api/v1/workflows
 Content-Type: application/json
@@ -205,13 +253,14 @@ Content-Type: application/json
   "requirement": "make links faster and safer"
 }
 ```
-**Response (201 Created)**:
+
+**Response (201 Created - Paused for Clarification)**:
 ```json
 {
-  "id": "9bf281d2-...",
+  "id": "9bf281d2-a720-4b8c-b0cf-5b1b467dbb22",
   "scenario": "AMBIGUOUS",
   "status": "WAITING_FOR_CLARIFICATION",
-  "currentStage": "SCENARIO_CLASSIFICATION",
+  "currentStage": "REQUIREMENT_ANALYSIS",
   "unansweredQuestions": [
     "Is this request intended as a new greenfield build or a modification to an existing codebase?",
     "What specific functional capabilities, endpoints, or quantitative constraints should be implemented?"
@@ -219,13 +268,35 @@ Content-Type: application/json
 }
 ```
 
-**Submit Clarification**:
+**Submit Operator Clarification (`POST /api/v1/workflows/{id}/clarifications`)**:
 ```http
-POST /api/v1/workflows/9bf281d2-.../clarifications
+POST /api/v1/workflows/9bf281d2-a720-4b8c-b0cf-5b1b467dbb22/clarifications
 Content-Type: application/json
+X-Clarification-Token: dev-clarification-token
 
 {
-  "clarification": "Build a new greenfield REST service with p99 redirect under 10ms and HTTPS validation"
+  "clarification": "Build a new greenfield URL shortener with Base62 token generation and click analytics",
+  "submittedBy": "operator@example.com"
+}
+```
+
+**Response (200 OK - Clarified & Advanced to Plan Approval Gate)**:
+```json
+{
+  "id": "9bf281d2-a720-4b8c-b0cf-5b1b467dbb22",
+  "originalRequirement": "make links faster and safer",
+  "requirement": "make links faster and safer\n\nClarification: Build a new greenfield URL shortener with Base62 token generation and click analytics",
+  "scenario": "GREENFIELD",
+  "status": "WAITING_FOR_APPROVAL",
+  "currentStage": "PLAN_APPROVAL",
+  "planHash": "a1b2c3d4...",
+  "clarifications": [
+    {
+      "clarification": "Build a new greenfield URL shortener with Base62 token generation and click analytics",
+      "submittedBy": "operator@example.com",
+      "submittedAt": "2026-10-06T15:22:00Z"
+    }
+  ]
 }
 ```
 
@@ -236,3 +307,13 @@ Content-Type: application/json
 - `POST /api/v1/links`: Shorten a valid HTTP/HTTPS URL with optional custom alias (`201 Created`).
 - `GET /r/{tokenOrAlias}`: Fast HTTP 302 redirection to original target URL.
 - `GET /api/v1/links/{tokenOrAlias}/analytics`: View click counts, timestamps, and recent click events.
+
+---
+
+## Local Verification & Testing
+
+Execute the complete automated test suite without external dependencies:
+
+```bash
+./mvnw clean verify
+```

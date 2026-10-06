@@ -38,8 +38,9 @@ class WorkflowOrchestratorTest {
 
         assertThat(run).isNotNull();
         assertThat(run.getId()).isNotBlank();
-        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
-        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.FINISHED);
+        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.WAITING_FOR_APPROVAL);
+        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.PLAN_APPROVAL);
+        assertThat(run.getCurrentPlanHash()).isNotBlank();
 
         // Verify Acceptance Criteria
         assertThat(run.getAcceptanceCriteria()).isNotEmpty();
@@ -48,8 +49,20 @@ class WorkflowOrchestratorTest {
         // Verify Tasks
         assertThat(run.getTasks()).hasSize(5);
 
+        // Approve the plan to run specialist coordination to completion
+        WorkflowRun completed = orchestrator.approvePlan(
+                run.getId(),
+                "APPROVED",
+                run.getCurrentPlanHash(),
+                "test-approver",
+                "Approved for testing"
+        ).orElseThrow();
+
+        assertThat(completed.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
+        assertThat(completed.getCurrentStage()).isEqualTo(WorkflowStage.FINISHED);
+
         // Verify Event History
-        List<WorkflowEvent> events = run.getEvents();
+        List<WorkflowEvent> events = completed.getEvents();
         assertThat(events).isNotEmpty();
         List<String> eventTypes = events.stream().map(WorkflowEvent::eventType).toList();
         assertThat(eventTypes).containsSubsequence(
@@ -60,6 +73,8 @@ class WorkflowOrchestratorTest {
                 "REQUIREMENT_ACCEPTED",
                 "PLANNING_STARTED",
                 "PLAN_GENERATED",
+                "AWAITING_PLAN_APPROVAL",
+                "PLAN_APPROVED",
                 "COORDINATION_STARTED",
                 "COORDINATION_COMPLETED",
                 "WORKFLOW_COMPLETED"

@@ -41,8 +41,9 @@ class WorkflowControllerIntegrationTest {
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", startsWith("/api/v1/workflows/")))
                 .andExpect(jsonPath("$.id").isNotEmpty())
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.currentStage").value("FINISHED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("PLAN_APPROVAL"))
+                .andExpect(jsonPath("$.planHash").isNotEmpty())
                 .andExpect(jsonPath("$.acceptanceCriteria", not(empty())))
                 .andExpect(jsonPath("$.tasks", hasSize(5)))
                 .andExpect(jsonPath("$.tasks[0].taskId").value("TASK-1"))
@@ -52,9 +53,26 @@ class WorkflowControllerIntegrationTest {
                 .andExpect(jsonPath("$.agentDecisions", hasSize(3)))
                 .andReturn();
 
-        // Extract ID and test GET endpoint
+        // Extract ID and planHash, then approve the plan to complete
         String responseBody = result.getResponse().getContentAsString();
         String id = responseBody.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
+        String planHash = responseBody.replaceAll(".*\"planHash\":\"([^\"]+)\".*", "$1");
+
+        String approvePayload = String.format("""
+                {
+                  "decision": "APPROVED",
+                  "planHash": "%s",
+                  "approver": "lead-architect",
+                  "comments": "Plan verified and approved"
+                }
+                """, planHash);
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(approvePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.currentStage").value("FINISHED"));
 
         mockMvc.perform(get("/api/v1/workflows/" + id))
                 .andExpect(status().isOk())

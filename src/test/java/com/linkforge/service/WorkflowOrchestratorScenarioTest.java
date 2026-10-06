@@ -56,8 +56,19 @@ class WorkflowOrchestratorScenarioTest {
 
         assertThat(run).isNotNull();
         assertThat(run.getScenario()).isEqualTo(Scenario.GREENFIELD);
-        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
-        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.FINISHED);
+        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.WAITING_FOR_APPROVAL);
+        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.PLAN_APPROVAL);
+        assertThat(run.getCurrentPlanHash()).isNotBlank();
+
+        WorkflowRun completed = orchestrator.approvePlan(
+                run.getId(),
+                "APPROVED",
+                run.getCurrentPlanHash(),
+                "approver",
+                "Approved"
+        ).orElseThrow();
+        assertThat(completed.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
+        assertThat(completed.getCurrentStage()).isEqualTo(WorkflowStage.FINISHED);
         assertThat(run.getRepositoryPath()).isNull();
         assertThat(run.getRepositoryEvidence().hasEvidence()).isFalse();
 
@@ -93,8 +104,18 @@ class WorkflowOrchestratorScenarioTest {
         WorkflowRun run = orchestrator.startWorkflow(requirement, "existing-link-service");
 
         assertThat(run.getScenario()).isEqualTo(Scenario.BROWNFIELD);
-        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
-        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.FINISHED);
+        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.WAITING_FOR_APPROVAL);
+        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.PLAN_APPROVAL);
+
+        WorkflowRun completed = orchestrator.approvePlan(
+                run.getId(),
+                "APPROVED",
+                run.getCurrentPlanHash(),
+                "approver",
+                "Approved"
+        ).orElseThrow();
+        assertThat(completed.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
+        assertThat(completed.getCurrentStage()).isEqualTo(WorkflowStage.FINISHED);
         assertThat(run.getRepositoryEvidence()).isNotNull();
         assertThat(run.getRepositoryEvidence().hasEvidence()).isTrue();
         assertThat(run.getRepositoryEvidence().detectedLanguages()).contains("Java");
@@ -194,11 +215,21 @@ class WorkflowOrchestratorScenarioTest {
         Optional<WorkflowRun> resumed = orchestrator.submitClarification(run.getId(), clarification, null);
 
         assertThat(resumed).isPresent();
-        WorkflowRun completed = resumed.get();
+        WorkflowRun paused = resumed.get();
+        assertThat(paused.getStatus()).isEqualTo(WorkflowStatus.WAITING_FOR_APPROVAL);
+        assertThat(paused.getCurrentStage()).isEqualTo(WorkflowStage.PLAN_APPROVAL);
+        assertThat(paused.getScenario()).isEqualTo(Scenario.GREENFIELD);
+        assertThat(paused.getTasks()).hasSize(5);
+
+        WorkflowRun completed = orchestrator.approvePlan(
+                paused.getId(),
+                "APPROVED",
+                paused.getCurrentPlanHash(),
+                "approver",
+                "Approved"
+        ).orElseThrow();
         assertThat(completed.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
         assertThat(completed.getCurrentStage()).isEqualTo(WorkflowStage.FINISHED);
-        assertThat(completed.getScenario()).isEqualTo(Scenario.GREENFIELD);
-        assertThat(completed.getTasks()).hasSize(5);
 
         List<String> eventTypes = completed.getEvents().stream().map(WorkflowEvent::eventType).toList();
         assertThat(eventTypes).contains("CLARIFICATION_SUBMITTED", "WORKFLOW_COMPLETED");
@@ -221,20 +252,37 @@ class WorkflowOrchestratorScenarioTest {
         );
 
         assertThat(resumed).isPresent();
-        WorkflowRun completed = resumed.get();
+        WorkflowRun paused = resumed.get();
+        assertThat(paused.getStatus()).isEqualTo(WorkflowStatus.WAITING_FOR_APPROVAL);
+        assertThat(paused.getScenario()).isEqualTo(Scenario.BROWNFIELD);
+        assertThat(paused.getRepositoryEvidence().hasEvidence()).isTrue();
+        assertThat(paused.getTasks()).hasSize(3);
+
+        WorkflowRun completed = orchestrator.approvePlan(
+                paused.getId(),
+                "APPROVED",
+                paused.getCurrentPlanHash(),
+                "approver",
+                "Approved"
+        ).orElseThrow();
         assertThat(completed.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
-        assertThat(completed.getScenario()).isEqualTo(Scenario.BROWNFIELD);
-        assertThat(completed.getRepositoryEvidence().hasEvidence()).isTrue();
-        assertThat(completed.getTasks()).hasSize(3);
     }
 
     @Test
     @DisplayName("Submitting clarification to a workflow not waiting for clarification throws IllegalStateException")
     void submitClarificationToCompletedWorkflowThrows() {
         WorkflowRun run = orchestrator.startWorkflow("Build a new URL shortener");
-        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
+        assertThat(run.getStatus()).isEqualTo(WorkflowStatus.WAITING_FOR_APPROVAL);
+        WorkflowRun completed = orchestrator.approvePlan(
+                run.getId(),
+                "APPROVED",
+                run.getCurrentPlanHash(),
+                "approver",
+                "Approved"
+        ).orElseThrow();
+        assertThat(completed.getStatus()).isEqualTo(WorkflowStatus.COMPLETED);
 
-        assertThatThrownBy(() -> orchestrator.submitClarification(run.getId(), "Extra details", null))
+        assertThatThrownBy(() -> orchestrator.submitClarification(completed.getId(), "Extra details", null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("is not waiting for clarification");
     }

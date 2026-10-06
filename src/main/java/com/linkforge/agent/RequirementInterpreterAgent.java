@@ -163,6 +163,9 @@ public class RequirementInterpreterAgent {
                 || normalized.contains("link")
                 || normalized.contains("api")
                 || normalized.contains("endpoint"));
+        if (normalized.contains("clarification:")) {
+            return (isVaguePrompt && lacksSpecificAction) || (normalized.split("\\s+").length <= 6 && lacksSpecificAction);
+        }
         return isVaguePrompt || (normalized.split("\\s+").length <= 6 && lacksSpecificAction);
     }
 

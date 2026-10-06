@@ -1,11 +1,21 @@
 package com.linkforge.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.linkforge.agent.DependencyAwarePlannerAgent;
-import com.linkforge.agent.RequirementInterpretationResult;
 import com.linkforge.agent.RequirementInterpreterAgent;
+import com.linkforge.agent.RequirementInterpretationResult;
 import com.linkforge.agent.ScenarioClassifierAgent;
 import com.linkforge.agent.TaskPlanningResult;
+import com.linkforge.agent.specialist.ApiBehaviorSpecialistAgent;
+import com.linkforge.agent.specialist.DataPersistenceSpecialistAgent;
+import com.linkforge.agent.specialist.SecurityValidationSpecialistAgent;
+import com.linkforge.agent.specialist.SpecialistAgent;
+import com.linkforge.agent.specialist.SpecialistRegistry;
+import com.linkforge.agent.specialist.TestingQualitySpecialistAgent;
 import com.linkforge.domain.workflow.AgentDecision;
+import com.linkforge.domain.workflow.PlannedTask;
+import com.linkforge.domain.workflow.WorkflowApproval;
+import com.linkforge.domain.workflow.WorkflowClarification;
 import com.linkforge.domain.workflow.WorkflowEvent;
 import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.domain.workflow.WorkflowStage;
@@ -14,22 +24,16 @@ import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
 import com.linkforge.domain.workflow.scenario.Scenario;
 import com.linkforge.domain.workflow.scenario.ScenarioClassificationResult;
 import com.linkforge.domain.workflow.scenario.exception.InspectionException;
-import com.linkforge.service.inspection.CodebaseInspectionProperties;
-import com.linkforge.service.inspection.CodebaseInspector;
-import org.slf4j.Logger;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.linkforge.agent.specialist.ApiBehaviorSpecialistAgent;
-import com.linkforge.agent.specialist.DataPersistenceSpecialistAgent;
-import com.linkforge.agent.specialist.SecurityValidationSpecialistAgent;
-import com.linkforge.agent.specialist.SpecialistAgent;
-import com.linkforge.agent.specialist.SpecialistRegistry;
-import com.linkforge.agent.specialist.TestingQualitySpecialistAgent;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
-import com.linkforge.domain.workflow.specialist.exception.TaskGraphException;
 import com.linkforge.service.coordination.CoordinationResult;
 import com.linkforge.service.coordination.SpecialistCoordinationProperties;
 import com.linkforge.service.coordination.TaskGraphCoordinator;
+import com.linkforge.domain.workflow.specialist.exception.TaskGraphException;
 import com.linkforge.service.coordination.TaskGraphValidator;
+import com.linkforge.service.inspection.CodebaseInspectionProperties;
+import com.linkforge.service.inspection.CodebaseInspector;
+import com.linkforge.service.security.InvalidPlanHashException;
+import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -37,6 +41,17 @@ import org.springframework.stereotype.Service;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * Service orchestrating the complete software delivery workflow:
+ * 1. Intake
+ * 2. Scenario Classification (GREENFIELD, BROWNFIELD, AMBIGUOUS)
+ * 3. Codebase Inspection (for brownfield)
+ * 4. Requirement Interpretation
+ * 5. Task Planning
+ * 6. Human Plan Approval Gate (pauses for authorized human approval)
+ * 7. Bounded Specialist Coordination
+ * 8. Finished
+ */
 @Service
 public class WorkflowOrchestrator {
 
@@ -126,12 +141,31 @@ public class WorkflowOrchestrator {
     }
 
     public Optional<WorkflowRun> submitClarification(String workflowId, String clarificationText, String repositoryPath) {
+        return submitClarification(workflowId, clarificationText, repositoryPath, "operator");
+    }
+
+    public Optional<WorkflowRun> submitClarification(String workflowId, String clarificationText, String repositoryPath, String submittedBy) {
+        if (clarificationText == null || clarificationText.trim().isEmpty()) {
+            throw new IllegalArgumentException("Clarification text cannot be blank or incomplete.");
+        }
+
         Optional<WorkflowRun> optRun = workflowRepository.findById(workflowId);
         if (optRun.isEmpty()) {
             return Optional.empty();
         }
 
         WorkflowRun run = optRun.get();
+
+        String trimmedClarification = clarificationText.trim();
+
+        // Idempotency check for repeat submissions of the same clarification
+        if (!run.getClarificationHistory().isEmpty()) {
+            WorkflowClarification last = run.getClarificationHistory().get(run.getClarificationHistory().size() - 1);
+            if (last.clarificationText().trim().equalsIgnoreCase(trimmedClarification)) {
+                return Optional.of(run);
+            }
+        }
+
         if (run.getStatus() != WorkflowStatus.WAITING_FOR_CLARIFICATION) {
             throw new IllegalStateException("Workflow '" + workflowId + "' is not waiting for clarification. Current status: " + run.getStatus());
         }
@@ -141,23 +175,96 @@ public class WorkflowOrchestrator {
                 : run.getRepositoryPath();
         run.setRepositoryPath(effectiveRepoPath);
 
+        String effectiveActor = (submittedBy != null && !submittedBy.isBlank()) ? submittedBy.trim() : "operator";
+        WorkflowClarification clarification = WorkflowClarification.of(run.getId(), clarificationText.trim(), effectiveActor);
+        run.addClarification(clarification);
+        workflowRepository.saveClarification(clarification);
+
         run.addEvent(WorkflowEvent.of(
                 "CLARIFICATION_SUBMITTED",
                 run.getCurrentStage().name(),
-                "User submitted clarification: " + clarificationText
+                "Clarification submitted by " + effectiveActor + ": " + clarificationText.trim()
         ));
 
         run.setUnansweredQuestions(List.of());
 
-        String effectiveRequirement = run.getRequirement();
-        if (clarificationText != null && !clarificationText.isBlank()) {
-            if (run.getScenario() == Scenario.AMBIGUOUS) {
-                effectiveRequirement = clarificationText;
-            } else {
-                effectiveRequirement = run.getRequirement() + " (" + clarificationText + ")";
-            }
+        // Re-run requirement analysis using original requirement plus clarification history
+        StringBuilder combined = new StringBuilder(run.getOriginalRequirement());
+        for (WorkflowClarification c : run.getClarificationHistory()) {
+            combined.append(". Clarification: ").append(c.clarificationText());
         }
+        String effectiveRequirement = combined.toString();
+
         return Optional.of(executePipeline(run, effectiveRequirement, effectiveRepoPath));
+    }
+
+    public Optional<WorkflowRun> approvePlan(
+            String workflowId,
+            String decision,
+            String planHash,
+            String approver,
+            String comments
+    ) {
+        if (decision == null || decision.isBlank()) {
+            throw new IllegalArgumentException("Decision cannot be blank. Must be APPROVED or REJECTED.");
+        }
+        String normalizedDecision = decision.trim().toUpperCase();
+        if (!"APPROVED".equals(normalizedDecision) && !"REJECTED".equals(normalizedDecision)) {
+            throw new IllegalArgumentException("Invalid decision '" + decision + "'. Must be APPROVED or REJECTED.");
+        }
+        if (planHash == null || planHash.isBlank()) {
+            throw new IllegalArgumentException("Plan hash cannot be blank.");
+        }
+
+        Optional<WorkflowRun> optRun = workflowRepository.findById(workflowId);
+        if (optRun.isEmpty()) {
+            return Optional.empty();
+        }
+
+        WorkflowRun run = optRun.get();
+
+        // Idempotency: duplicate approval or rejection with identical hash and decision
+        if (run.getApproval() != null
+                && planHash.trim().equals(run.getApproval().planHash())
+                && normalizedDecision.equalsIgnoreCase(run.getApproval().decision())) {
+            return Optional.of(run);
+        }
+
+        if (run.getStatus() != WorkflowStatus.WAITING_FOR_APPROVAL) {
+            throw new IllegalStateException("Workflow '" + workflowId + "' is not waiting for approval. Current status: " + run.getStatus());
+        }
+
+        if (run.getCurrentPlanHash() == null || !run.getCurrentPlanHash().equals(planHash.trim())) {
+            throw new InvalidPlanHashException("Submitted plan hash '" + planHash.trim() +
+                    "' does not match current plan hash '" + run.getCurrentPlanHash() + "'.");
+        }
+
+        String effectiveApprover = (approver != null && !approver.isBlank()) ? approver.trim() : "authorized-approver";
+        WorkflowApproval approval = WorkflowApproval.of(run.getId(), normalizedDecision, effectiveApprover, planHash.trim(), comments);
+        run.setApproval(approval);
+        workflowRepository.saveApproval(approval);
+
+        if ("REJECTED".equals(normalizedDecision)) {
+            run.transitionTo(WorkflowStatus.REJECTED, WorkflowStage.PLAN_APPROVAL);
+            run.addEvent(WorkflowEvent.of(
+                    "PLAN_REJECTED",
+                    WorkflowStage.PLAN_APPROVAL.name(),
+                    "Plan hash " + planHash.trim() + " rejected by " + effectiveApprover +
+                            (comments != null && !comments.isBlank() ? ": " + comments : "")
+            ));
+            return Optional.of(workflowRepository.save(run));
+        }
+
+        // APPROVED: proceed to specialist coordination
+        run.addEvent(WorkflowEvent.of(
+                "PLAN_APPROVED",
+                WorkflowStage.PLAN_APPROVAL.name(),
+                "Plan hash " + planHash.trim() + " approved by " + effectiveApprover +
+                        (comments != null && !comments.isBlank() ? ": " + comments : "")
+        ));
+
+        WorkflowRun coordinated = executeSpecialistCoordination(run, run.getRequirement());
+        return Optional.of(workflowRepository.save(coordinated));
     }
 
     private WorkflowRun executePipeline(WorkflowRun run, String requirementText, String repositoryPath) {
@@ -179,7 +286,6 @@ public class WorkflowOrchestrator {
                 classification.metadata()
         );
         run.addAgentDecision(classDecision);
-        run.setClassificationDecision(classDecision);
 
         if (classification.fallbackOccurred()) {
             run.addEvent(WorkflowEvent.of(
@@ -364,23 +470,43 @@ public class WorkflowOrchestrator {
         run.addEvent(WorkflowEvent.of(
                 "PLAN_GENERATED",
                 WorkflowStage.TASK_PLANNING.name(),
-                "Generated dependency graph with " + planningResult.tasks().size() + " tasks."
+                "Generated dependency graph with " + planningResult.tasks().size() + " tasks (plan hash: " + run.getCurrentPlanHash() + ")."
         ));
 
-        // 5. Specialist Coordination Stage
+        // 5. Human Plan Approval Gate: Pause before specialist coordination
+        boolean isApproved = run.getApproval() != null
+                && run.getApproval().isApproved()
+                && run.getCurrentPlanHash() != null
+                && run.getCurrentPlanHash().equals(run.getApproval().planHash());
+
+        if (!isApproved) {
+            run.transitionTo(WorkflowStatus.WAITING_FOR_APPROVAL, WorkflowStage.PLAN_APPROVAL);
+            run.addEvent(WorkflowEvent.of(
+                    "AWAITING_PLAN_APPROVAL",
+                    WorkflowStage.PLAN_APPROVAL.name(),
+                    "Workflow paused awaiting human plan approval for plan hash: " + run.getCurrentPlanHash()
+            ));
+            return workflowRepository.save(run);
+        }
+
+        // 6. Specialist Coordination Stage (only if already approved)
+        return executeSpecialistCoordination(run, requirementText);
+    }
+
+    public WorkflowRun executeSpecialistCoordination(WorkflowRun run, String requirementText) {
         run.transitionTo(WorkflowStatus.IN_PROGRESS, WorkflowStage.SPECIALIST_COORDINATION);
         run.addEvent(WorkflowEvent.of(
                 "COORDINATION_STARTED",
                 WorkflowStage.SPECIALIST_COORDINATION.name(),
-                "Initiating bounded specialist coordination across " + planningResult.tasks().size() + " planned tasks."
+                "Initiating bounded specialist coordination across " + run.getTasks().size() + " planned tasks."
         ));
 
         CoordinationResult coordinationResult;
         try {
             coordinationResult = taskGraphCoordinator.coordinate(
-                    planningResult.tasks(),
+                    run.getTasks(),
                     requirementText,
-                    interpretation.acceptanceCriteria(),
+                    run.getAcceptanceCriteria(),
                     run.getScenario(),
                     run.getRepositoryEvidence()
             );

@@ -13,6 +13,7 @@ import java.util.UUID;
 public class WorkflowRun {
 
     private final String id;
+    private final String originalRequirement;
     private final String requirement;
     private String repositoryPath;
     private Scenario scenario;
@@ -28,10 +29,13 @@ public class WorkflowRun {
     private List<String> assumptions = Collections.emptyList();
     private List<String> unansweredQuestions = Collections.emptyList();
     private List<PlannedTask> tasks = Collections.emptyList();
+    private String currentPlanHash;
 
     private final List<WorkflowEvent> events = new ArrayList<>();
     private final List<AgentDecision> agentDecisions = new ArrayList<>();
     private final List<SpecialistInvocation> specialistInvocations = new ArrayList<>();
+    private final List<WorkflowClarification> clarificationHistory = new ArrayList<>();
+    private WorkflowApproval approval;
 
     public WorkflowRun(String requirement) {
         this(requirement, null);
@@ -39,6 +43,7 @@ public class WorkflowRun {
 
     public WorkflowRun(String requirement, String repositoryPath) {
         this.id = UUID.randomUUID().toString();
+        this.originalRequirement = requirement;
         this.requirement = requirement;
         this.repositoryPath = repositoryPath;
         this.status = WorkflowStatus.CREATED;
@@ -100,7 +105,55 @@ public class WorkflowRun {
 
     public synchronized void setTasks(List<PlannedTask> tasks) {
         this.tasks = tasks != null ? List.copyOf(tasks) : Collections.emptyList();
+        String newHash = PlanHasher.computePlanHash(this.tasks);
+        if (this.currentPlanHash != null && !this.currentPlanHash.equals(newHash)) {
+            if (this.approval != null && !this.approval.planHash().equals(newHash)) {
+                this.approval = null; // Invalidate approval if plan hash changes
+            }
+        }
+        this.currentPlanHash = newHash;
         this.updatedAt = Instant.now();
+    }
+
+    public synchronized void addClarification(WorkflowClarification clarification) {
+        if (clarification != null) {
+            this.clarificationHistory.add(clarification);
+            this.updatedAt = Instant.now();
+        }
+    }
+
+    public synchronized void setClarificationHistory(List<WorkflowClarification> clarifications) {
+        this.clarificationHistory.clear();
+        if (clarifications != null) {
+            this.clarificationHistory.addAll(clarifications);
+        }
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized List<WorkflowClarification> getClarificationHistory() {
+        return Collections.unmodifiableList(new ArrayList<>(clarificationHistory));
+    }
+
+    public synchronized void setApproval(WorkflowApproval approval) {
+        this.approval = approval;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized WorkflowApproval getApproval() {
+        return approval;
+    }
+
+    public synchronized String getCurrentPlanHash() {
+        return currentPlanHash;
+    }
+
+    public synchronized void setCurrentPlanHash(String hash) {
+        this.currentPlanHash = hash;
+        this.updatedAt = Instant.now();
+    }
+
+    public String getOriginalRequirement() {
+        return originalRequirement;
     }
 
     public String getId() {
@@ -124,7 +177,13 @@ public class WorkflowRun {
     }
 
     public synchronized AgentDecision getClassificationDecision() {
-        return classificationDecision;
+        if (classificationDecision != null) {
+            return classificationDecision;
+        }
+        return agentDecisions.stream()
+                .filter(d -> "scenario-classifier".equals(d.agentName()))
+                .reduce((first, second) -> second)
+                .orElse(null);
     }
 
     public synchronized WorkflowStatus getStatus() {

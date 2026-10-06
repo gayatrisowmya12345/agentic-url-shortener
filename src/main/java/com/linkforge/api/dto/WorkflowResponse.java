@@ -2,6 +2,8 @@ package com.linkforge.api.dto;
 
 import com.linkforge.domain.workflow.AgentDecision;
 import com.linkforge.domain.workflow.PlannedTask;
+import com.linkforge.domain.workflow.WorkflowApproval;
+import com.linkforge.domain.workflow.WorkflowClarification;
 import com.linkforge.domain.workflow.WorkflowEvent;
 import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
@@ -12,6 +14,7 @@ import java.util.List;
 
 public record WorkflowResponse(
         String id,
+        String originalRequirement,
         String requirement,
         String scenario,
         String repositoryPath,
@@ -24,6 +27,9 @@ public record WorkflowResponse(
         List<String> assumptions,
         List<String> unansweredQuestions,
         List<PlannedTask> tasks,
+        String planHash,
+        WorkflowApproval approval,
+        List<WorkflowClarification> clarifications,
         List<SpecialistInvocation> specialistInvocations,
         List<WorkflowEvent> events,
         List<AgentDecision> agentDecisions,
@@ -37,6 +43,7 @@ public record WorkflowResponse(
 
         return new WorkflowResponse(
                 run.getId(),
+                run.getOriginalRequirement(),
                 run.getRequirement(),
                 run.getScenario() != null ? run.getScenario().name() : null,
                 run.getRepositoryPath(),
@@ -49,6 +56,9 @@ public record WorkflowResponse(
                 run.getAssumptions(),
                 run.getUnansweredQuestions(),
                 run.getTasks(),
+                run.getCurrentPlanHash(),
+                run.getApproval(),
+                run.getClarificationHistory(),
                 run.getSpecialistInvocations(),
                 run.getEvents(),
                 run.getAgentDecisions(),

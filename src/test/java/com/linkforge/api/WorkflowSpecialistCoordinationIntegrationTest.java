@@ -61,12 +61,24 @@ class WorkflowSpecialistCoordinationIntegrationTest {
                 }
                 """;
 
-        MvcResult result = mockMvc.perform(post("/api/v1/workflows")
+        MvcResult createResult = mockMvc.perform(post("/api/v1/workflows")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.id").isNotEmpty())
                 .andExpect(jsonPath("$.scenario").value("GREENFIELD"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("PLAN_APPROVAL"))
+                .andExpect(jsonPath("$.planHash").isNotEmpty())
+                .andReturn();
+
+        String id = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asText();
+        String planHash = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("planHash").asText();
+
+        MvcResult result = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"))
                 .andExpect(jsonPath("$.tasks", hasSize(5)))
@@ -87,8 +99,6 @@ class WorkflowSpecialistCoordinationIntegrationTest {
                 .andExpect(jsonPath("$.events[*].eventType", hasItem("SPECIALIST_TASK_COMPLETED")))
                 .andExpect(jsonPath("$.events[*].eventType", hasItem("COORDINATION_COMPLETED")))
                 .andReturn();
-
-        String id = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
 
         // Verify GET /api/v1/workflows/{id} returns full coordination state
         mockMvc.perform(get("/api/v1/workflows/" + id))
@@ -112,11 +122,23 @@ class WorkflowSpecialistCoordinationIntegrationTest {
                 }
                 """;
 
-        mockMvc.perform(post("/api/v1/workflows")
+        MvcResult createResult = mockMvc.perform(post("/api/v1/workflows")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.scenario").value("BROWNFIELD"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("PLAN_APPROVAL"))
+                .andExpect(jsonPath("$.planHash").isNotEmpty())
+                .andReturn();
+
+        String id = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asText();
+        String planHash = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("planHash").asText();
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.tasks", hasSize(3)))
                 .andExpect(jsonPath("$.tasks[0].status").value("COMPLETED"))

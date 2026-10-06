@@ -74,23 +74,31 @@ class ModelBackedWorkflowIntegrationTest {
                 }
                 """;
 
-        MvcResult result = mockMvc.perform(post("/api/v1/workflows")
+        MvcResult createResult = mockMvc.perform(post("/api/v1/workflows")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.currentStage").value("FINISHED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("PLAN_APPROVAL"))
                 .andExpect(jsonPath("$.acceptanceCriteria", hasSize(2)))
                 .andExpect(jsonPath("$.acceptanceCriteria[0]").value("AC-AI-1: Given an input URL, hash with Murmur3 and encode in Base62"))
                 .andExpect(jsonPath("$.assumptions", hasSize(2)))
                 .andExpect(jsonPath("$.assumptions[0]").value("Target p99 latency is below 10ms"))
-                .andExpect(jsonPath("$.agentDecisions[0].agentType").value("MODEL_BACKED_AGENT"))
-                .andExpect(jsonPath("$.agentDecisions[0].metadata.provider").value("fake"))
+                .andExpect(jsonPath("$.agentDecisions[1].agentType").value("MODEL_BACKED_AGENT"))
+                .andExpect(jsonPath("$.agentDecisions[1].metadata.provider").value("fake"))
                 .andExpect(jsonPath("$.events[*].eventType", hasItem("MODEL_INTERPRETATION_COMPLETED")))
                 .andReturn();
 
-        String responseBody = result.getResponse().getContentAsString();
+        String responseBody = createResult.getResponse().getContentAsString();
         String id = responseBody.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
+        String planHash = responseBody.replaceAll(".*\"planHash\":\"([^\"]+)\".*", "$1");
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.currentStage").value("FINISHED"));
 
         mockMvc.perform(get("/api/v1/workflows/" + id))
                 .andExpect(status().isOk())
@@ -110,15 +118,26 @@ class ModelBackedWorkflowIntegrationTest {
                 }
                 """;
 
-        mockMvc.perform(post("/api/v1/workflows")
+        MvcResult createResult = mockMvc.perform(post("/api/v1/workflows")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.agentDecisions[0].agentType").value("DETERMINISTIC_SPECIALIST_FALLBACK"))
-                .andExpect(jsonPath("$.agentDecisions[0].metadata.fallbackOccurred").value(true))
-                .andExpect(jsonPath("$.agentDecisions[0].metadata.fallbackReason", containsString("Connection timeout")))
-                .andExpect(jsonPath("$.events[*].eventType", hasItem("LLM_FALLBACK_TRIGGERED")));
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.agentDecisions[1].agentType").value("DETERMINISTIC_SPECIALIST_FALLBACK"))
+                .andExpect(jsonPath("$.agentDecisions[1].metadata.fallbackOccurred").value(true))
+                .andExpect(jsonPath("$.agentDecisions[1].metadata.fallbackReason", containsString("Connection timeout")))
+                .andExpect(jsonPath("$.events[*].eventType", hasItem("LLM_FALLBACK_TRIGGERED")))
+                .andReturn();
+
+        String responseBody = createResult.getResponse().getContentAsString();
+        String id = responseBody.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
+        String planHash = responseBody.replaceAll(".*\"planHash\":\"([^\"]+)\".*", "$1");
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
 
     @Test
@@ -133,13 +152,24 @@ class ModelBackedWorkflowIntegrationTest {
                 }
                 """;
 
-        mockMvc.perform(post("/api/v1/workflows")
+        MvcResult createResult = mockMvc.perform(post("/api/v1/workflows")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(payload))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.agentDecisions[0].agentType").value("DETERMINISTIC_SPECIALIST_FALLBACK"))
-                .andExpect(jsonPath("$.agentDecisions[0].metadata.fallbackOccurred").value(true))
-                .andExpect(jsonPath("$.events[*].eventType", hasItem("LLM_FALLBACK_TRIGGERED")));
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.agentDecisions[1].agentType").value("DETERMINISTIC_SPECIALIST_FALLBACK"))
+                .andExpect(jsonPath("$.agentDecisions[1].metadata.fallbackOccurred").value(true))
+                .andExpect(jsonPath("$.events[*].eventType", hasItem("LLM_FALLBACK_TRIGGERED")))
+                .andReturn();
+
+        String responseBody = createResult.getResponse().getContentAsString();
+        String id = responseBody.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
+        String planHash = responseBody.replaceAll(".*\"planHash\":\"([^\"]+)\".*", "$1");
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
 }
