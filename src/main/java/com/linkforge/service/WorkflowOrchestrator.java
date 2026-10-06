@@ -43,7 +43,7 @@ public class WorkflowOrchestrator {
         run.addEvent(WorkflowEvent.of(
                 "INTERPRETATION_STARTED",
                 WorkflowStage.REQUIREMENT_INTERPRETATION.name(),
-                "Delegating requirement analysis to deterministic interpreter agent."
+                "Delegating requirement analysis to requirement interpreter agent."
         ));
 
         RequirementInterpretationResult interpretation = requirementInterpreterAgent.interpret(rawRequirement);
@@ -54,6 +54,23 @@ public class WorkflowOrchestrator {
                 interpretation.rationale(),
                 interpretation.metadata()
         ));
+
+        // Audit model execution vs fallback
+        if (interpretation.fallbackOccurred()) {
+            run.addEvent(WorkflowEvent.of(
+                    "LLM_FALLBACK_TRIGGERED",
+                    WorkflowStage.REQUIREMENT_INTERPRETATION.name(),
+                    "Model provider failed or returned invalid output; fell back to deterministic rules. Reason: " + interpretation.fallbackReason()
+            ));
+        } else if ("MODEL_BACKED_AGENT".equals(interpretation.metadata().get("type"))) {
+            run.addEvent(WorkflowEvent.of(
+                    "MODEL_INTERPRETATION_COMPLETED",
+                    WorkflowStage.REQUIREMENT_INTERPRETATION.name(),
+                    "Model-backed interpretation succeeded using provider " + interpretation.metadata().get("provider") + " (" + interpretation.metadata().get("model") + ")."
+            ));
+        }
+
+        run.setAssumptions(interpretation.assumptions());
 
         if (!interpretation.clear()) {
             run.setUnansweredQuestions(interpretation.unansweredQuestions());

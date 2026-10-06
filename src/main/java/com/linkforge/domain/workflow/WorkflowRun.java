@@ -16,6 +16,7 @@ public class WorkflowRun {
     private Instant updatedAt;
 
     private List<String> acceptanceCriteria = Collections.emptyList();
+    private List<String> assumptions = Collections.emptyList();
     private List<String> unansweredQuestions = Collections.emptyList();
     private List<PlannedTask> tasks = Collections.emptyList();
 
@@ -49,6 +50,11 @@ public class WorkflowRun {
 
     public synchronized void setAcceptanceCriteria(List<String> criteria) {
         this.acceptanceCriteria = criteria != null ? List.copyOf(criteria) : Collections.emptyList();
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void setAssumptions(List<String> assumptions) {
+        this.assumptions = assumptions != null ? List.copyOf(assumptions) : Collections.emptyList();
         this.updatedAt = Instant.now();
     }
 
@@ -88,6 +94,10 @@ public class WorkflowRun {
 
     public synchronized List<String> getAcceptanceCriteria() {
         return acceptanceCriteria;
+    }
+
+    public synchronized List<String> getAssumptions() {
+        return assumptions;
     }
 
     public synchronized List<String> getUnansweredQuestions() {
