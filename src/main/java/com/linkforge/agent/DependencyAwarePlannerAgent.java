@@ -40,35 +40,40 @@ public class DependencyAwarePlannerAgent {
                         "Core Domain Models & Thread-Safe Store",
                         "Design Link entity (id, originalUrl, token, clickCount, createdAt) and ConcurrentHashMap storage registry.",
                         List.of(),
-                        "PENDING"
+                        "PENDING",
+                        "DATA_PERSISTENCE"
                 ),
                 new PlannedTask(
                         "TASK-2",
                         "URL Validation & Scheme Sanitization Engine",
                         "Implement strict HTTP/HTTPS URI protocol checks, RFC 3986 format validation, and rejection of malformed URLs.",
                         List.of("TASK-1"),
-                        "PENDING"
+                        "PENDING",
+                        "SECURITY_VALIDATION"
                 ),
                 new PlannedTask(
                         "TASK-3",
                         "Collision-Free Token Generator",
                         "Implement Base62 token generator with deterministic pseudo-random hashing and collision detection.",
                         List.of("TASK-1"),
-                        "PENDING"
+                        "PENDING",
+                        "API_BEHAVIOR"
                 ),
                 new PlannedTask(
                         "TASK-4",
                         "Redirection Controller & Atomic Analytics",
                         "Implement GET /{token} handler returning HTTP 302 redirect along with atomic access count increments.",
                         List.of("TASK-2", "TASK-3"),
-                        "PENDING"
+                        "PENDING",
+                        "API_BEHAVIOR"
                 ),
                 new PlannedTask(
                         "TASK-5",
                         "Automated Verification Suite",
                         "Create comprehensive MockMvc tests verifying link generation, 302 redirection, 400 validation, and 404 missing routes.",
                         List.of("TASK-4"),
-                        "PENDING"
+                        "PENDING",
+                        "TESTING_QUALITY"
                 )
         );
 
@@ -99,21 +104,24 @@ public class DependencyAwarePlannerAgent {
                         "Codebase Baseline Inspection & Dependency Analysis",
                         "Review existing codebase structure at " + evidence.repositoryPath() + " with manifests: " + manifests + ".",
                         List.of(),
-                        "PENDING"
+                        "PENDING",
+                        "DATA_PERSISTENCE"
                 ),
                 new PlannedTask(
                         "TASK-2",
                         "Codebase Extension & Architectural Alignment",
                         "Implement modifications following existing " + frameworks + " architecture and " + languages + " conventions.",
                         List.of("TASK-1"),
-                        "PENDING"
+                        "PENDING",
+                        "API_BEHAVIOR"
                 ),
                 new PlannedTask(
                         "TASK-3",
                         "Regression Verification & Source Compatibility",
                         "Verify backwards compatibility against existing codebase components (" + sampleSource + ").",
                         List.of("TASK-2"),
-                        "PENDING"
+                        "PENDING",
+                        "TESTING_QUALITY"
                 )
         );
 

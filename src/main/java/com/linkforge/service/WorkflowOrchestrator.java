@@ -17,6 +17,19 @@ import com.linkforge.domain.workflow.scenario.exception.InspectionException;
 import com.linkforge.service.inspection.CodebaseInspectionProperties;
 import com.linkforge.service.inspection.CodebaseInspector;
 import org.slf4j.Logger;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.linkforge.agent.specialist.ApiBehaviorSpecialistAgent;
+import com.linkforge.agent.specialist.DataPersistenceSpecialistAgent;
+import com.linkforge.agent.specialist.SecurityValidationSpecialistAgent;
+import com.linkforge.agent.specialist.SpecialistAgent;
+import com.linkforge.agent.specialist.SpecialistRegistry;
+import com.linkforge.agent.specialist.TestingQualitySpecialistAgent;
+import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
+import com.linkforge.domain.workflow.specialist.exception.TaskGraphException;
+import com.linkforge.service.coordination.CoordinationResult;
+import com.linkforge.service.coordination.SpecialistCoordinationProperties;
+import com.linkforge.service.coordination.TaskGraphCoordinator;
+import com.linkforge.service.coordination.TaskGraphValidator;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -34,6 +47,7 @@ public class WorkflowOrchestrator {
     private final RequirementInterpreterAgent requirementInterpreterAgent;
     private final DependencyAwarePlannerAgent plannerAgent;
     private final WorkflowRepository workflowRepository;
+    private final TaskGraphCoordinator taskGraphCoordinator;
 
     public WorkflowOrchestrator(
             RequirementInterpreterAgent requirementInterpreterAgent,
@@ -45,7 +59,25 @@ public class WorkflowOrchestrator {
                 new CodebaseInspector(new CodebaseInspectionProperties()),
                 requirementInterpreterAgent,
                 plannerAgent,
-                workflowRepository
+                workflowRepository,
+                createDefaultTaskGraphCoordinator()
+        );
+    }
+
+    public WorkflowOrchestrator(
+            ScenarioClassifierAgent scenarioClassifierAgent,
+            CodebaseInspector codebaseInspector,
+            RequirementInterpreterAgent requirementInterpreterAgent,
+            DependencyAwarePlannerAgent plannerAgent,
+            WorkflowRepository workflowRepository
+    ) {
+        this(
+                scenarioClassifierAgent,
+                codebaseInspector,
+                requirementInterpreterAgent,
+                plannerAgent,
+                workflowRepository,
+                createDefaultTaskGraphCoordinator()
         );
     }
 
@@ -55,13 +87,27 @@ public class WorkflowOrchestrator {
             CodebaseInspector codebaseInspector,
             RequirementInterpreterAgent requirementInterpreterAgent,
             DependencyAwarePlannerAgent plannerAgent,
-            WorkflowRepository workflowRepository
+            WorkflowRepository workflowRepository,
+            TaskGraphCoordinator taskGraphCoordinator
     ) {
         this.scenarioClassifierAgent = scenarioClassifierAgent;
         this.codebaseInspector = codebaseInspector;
         this.requirementInterpreterAgent = requirementInterpreterAgent;
         this.plannerAgent = plannerAgent;
         this.workflowRepository = workflowRepository;
+        this.taskGraphCoordinator = taskGraphCoordinator != null ? taskGraphCoordinator : createDefaultTaskGraphCoordinator();
+    }
+
+    private static TaskGraphCoordinator createDefaultTaskGraphCoordinator() {
+        ObjectMapper mapper = new ObjectMapper();
+        List<SpecialistAgent> agents = List.of(
+                new ApiBehaviorSpecialistAgent(null, mapper),
+                new DataPersistenceSpecialistAgent(null, mapper),
+                new SecurityValidationSpecialistAgent(null, mapper),
+                new TestingQualitySpecialistAgent(null, mapper)
+        );
+        SpecialistRegistry registry = new SpecialistRegistry(agents);
+        return new TaskGraphCoordinator(new TaskGraphValidator(), registry, new SpecialistCoordinationProperties());
     }
 
     public WorkflowRun startWorkflow(String rawRequirement) {
@@ -321,12 +367,93 @@ public class WorkflowOrchestrator {
                 "Generated dependency graph with " + planningResult.tasks().size() + " tasks."
         ));
 
+        // 5. Specialist Coordination Stage
+        run.transitionTo(WorkflowStatus.IN_PROGRESS, WorkflowStage.SPECIALIST_COORDINATION);
+        run.addEvent(WorkflowEvent.of(
+                "COORDINATION_STARTED",
+                WorkflowStage.SPECIALIST_COORDINATION.name(),
+                "Initiating bounded specialist coordination across " + planningResult.tasks().size() + " planned tasks."
+        ));
+
+        CoordinationResult coordinationResult;
+        try {
+            coordinationResult = taskGraphCoordinator.coordinate(
+                    planningResult.tasks(),
+                    requirementText,
+                    interpretation.acceptanceCriteria(),
+                    run.getScenario(),
+                    run.getRepositoryEvidence()
+            );
+
+            run.setTasks(coordinationResult.updatedTasks());
+            run.setSpecialistInvocations(coordinationResult.invocations());
+
+            for (SpecialistInvocation inv : coordinationResult.invocations()) {
+                if ("SUCCESS".equalsIgnoreCase(inv.status())) {
+                    run.addEvent(WorkflowEvent.of(
+                            "SPECIALIST_TASK_COMPLETED",
+                            WorkflowStage.SPECIALIST_COORDINATION.name(),
+                            "Specialist " + inv.agentName() + " (" + inv.role() + ") completed task " + inv.taskId() + "."
+                    ));
+                    if (inv.fallbackOccurred()) {
+                        run.addEvent(WorkflowEvent.of(
+                                "SPECIALIST_FALLBACK_TRIGGERED",
+                                WorkflowStage.SPECIALIST_COORDINATION.name(),
+                                "Specialist " + inv.agentName() + " used fallback for task " + inv.taskId() + ": " + inv.fallbackReason()
+                        ));
+                    }
+                } else {
+                    run.addEvent(WorkflowEvent.of(
+                            "SPECIALIST_TASK_FAILED",
+                            WorkflowStage.SPECIALIST_COORDINATION.name(),
+                            "Specialist " + inv.agentName() + " failed on task " + inv.taskId() + ": " + inv.outputSummary()
+                    ));
+                }
+            }
+
+            if (!coordinationResult.allSuccessful()) {
+                run.addEvent(WorkflowEvent.of(
+                        "COORDINATION_PARTIAL_FAILURE",
+                        WorkflowStage.SPECIALIST_COORDINATION.name(),
+                        "Coordination halted with " + coordinationResult.failedCount() + " failures and " +
+                                coordinationResult.skippedCount() + " skipped tasks. Retained " +
+                                coordinationResult.completedCount() + " successful task results."
+                ));
+                run.transitionTo(WorkflowStatus.FAILED, WorkflowStage.SPECIALIST_COORDINATION);
+                return workflowRepository.save(run);
+            }
+
+            run.addEvent(WorkflowEvent.of(
+                    "COORDINATION_COMPLETED",
+                    WorkflowStage.SPECIALIST_COORDINATION.name(),
+                    "Successfully coordinated and executed " + coordinationResult.completedCount() + " specialist tasks."
+            ));
+        } catch (TaskGraphException e) {
+            log.warn("Task graph validation failed: {}", e.getMessage());
+            run.addEvent(WorkflowEvent.of(
+                    "COORDINATION_FAILED",
+                    WorkflowStage.SPECIALIST_COORDINATION.name(),
+                    "Task graph validation rejected: " + e.getMessage()
+            ));
+            run.transitionTo(WorkflowStatus.FAILED, WorkflowStage.SPECIALIST_COORDINATION);
+            return workflowRepository.save(run);
+        } catch (Exception e) {
+            log.warn("Specialist coordination failed: {}", e.getMessage());
+            run.addEvent(WorkflowEvent.of(
+                    "COORDINATION_FAILED",
+                    WorkflowStage.SPECIALIST_COORDINATION.name(),
+                    "Specialist coordination error: " + e.getMessage()
+            ));
+            run.transitionTo(WorkflowStatus.FAILED, WorkflowStage.SPECIALIST_COORDINATION);
+            return workflowRepository.save(run);
+        }
+
         // Transition to Finished & Completed
         run.transitionTo(WorkflowStatus.COMPLETED, WorkflowStage.FINISHED);
         run.addEvent(WorkflowEvent.of(
                 "WORKFLOW_COMPLETED",
                 WorkflowStage.FINISHED.name(),
-                "Agentic workflow vertical slice completed successfully."
+                "Agentic workflow vertical slice completed successfully with specialist coordination."
         ));
 
         return workflowRepository.save(run);

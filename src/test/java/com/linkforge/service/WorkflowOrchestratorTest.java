@@ -52,7 +52,7 @@ class WorkflowOrchestratorTest {
         List<WorkflowEvent> events = run.getEvents();
         assertThat(events).isNotEmpty();
         List<String> eventTypes = events.stream().map(WorkflowEvent::eventType).toList();
-        assertThat(eventTypes).containsSequence(
+        assertThat(eventTypes).containsSubsequence(
                 "WORKFLOW_INITIALIZED",
                 "CLASSIFICATION_STARTED",
                 "SCENARIO_CLASSIFIED",
@@ -60,6 +60,8 @@ class WorkflowOrchestratorTest {
                 "REQUIREMENT_ACCEPTED",
                 "PLANNING_STARTED",
                 "PLAN_GENERATED",
+                "COORDINATION_STARTED",
+                "COORDINATION_COMPLETED",
                 "WORKFLOW_COMPLETED"
         );
         assertThat(events).allMatch(e -> e.timestamp() != null);

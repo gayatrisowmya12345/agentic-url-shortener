@@ -5,6 +5,7 @@ import com.linkforge.domain.workflow.PlannedTask;
 import com.linkforge.domain.workflow.WorkflowEvent;
 import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
+import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
 
 import java.time.Instant;
 import java.util.List;
@@ -23,6 +24,7 @@ public record WorkflowResponse(
         List<String> assumptions,
         List<String> unansweredQuestions,
         List<PlannedTask> tasks,
+        List<SpecialistInvocation> specialistInvocations,
         List<WorkflowEvent> events,
         List<AgentDecision> agentDecisions,
         Instant createdAt,
@@ -47,6 +49,7 @@ public record WorkflowResponse(
                 run.getAssumptions(),
                 run.getUnansweredQuestions(),
                 run.getTasks(),
+                run.getSpecialistInvocations(),
                 run.getEvents(),
                 run.getAgentDecisions(),
                 run.getCreatedAt(),

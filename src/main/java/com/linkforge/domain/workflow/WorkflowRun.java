@@ -2,6 +2,7 @@ package com.linkforge.domain.workflow;
 
 import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
 import com.linkforge.domain.workflow.scenario.Scenario;
+import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -30,6 +31,7 @@ public class WorkflowRun {
 
     private final List<WorkflowEvent> events = new ArrayList<>();
     private final List<AgentDecision> agentDecisions = new ArrayList<>();
+    private final List<SpecialistInvocation> specialistInvocations = new ArrayList<>();
 
     public WorkflowRun(String requirement) {
         this(requirement, null);
@@ -163,5 +165,24 @@ public class WorkflowRun {
 
     public synchronized List<AgentDecision> getAgentDecisions() {
         return Collections.unmodifiableList(new ArrayList<>(agentDecisions));
+    }
+
+    public synchronized void addSpecialistInvocation(SpecialistInvocation invocation) {
+        if (invocation != null) {
+            this.specialistInvocations.add(invocation);
+            this.updatedAt = Instant.now();
+        }
+    }
+
+    public synchronized void setSpecialistInvocations(List<SpecialistInvocation> invocations) {
+        this.specialistInvocations.clear();
+        if (invocations != null) {
+            this.specialistInvocations.addAll(invocations);
+        }
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized List<SpecialistInvocation> getSpecialistInvocations() {
+        return Collections.unmodifiableList(new ArrayList<>(specialistInvocations));
     }
 }
