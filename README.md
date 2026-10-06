@@ -109,6 +109,14 @@ LinkForge provides resilient stage execution and graceful workflow termination:
    - Stop requests against already completed, failed, or rejected workflows are rejected with HTTP 409 Conflict.
    - The cancellation identity (`cancelledBy`), timestamp, reason, and execution stage are permanently recorded in audit history.
 
+3. **Workflow Evidence, Audit History & Operator Observability**:
+   - Every state transition, operator gate action, retry attempt, and agent decision is persisted to relational H2 tables (`workflow_runs`, `workflow_events`, `workflow_agent_decisions`) with monotonic timestamps, stages, and structured details.
+   - Database-backed persistence ensures workflow runs and complete audit logs survive application restarts.
+   - Full acceptance-criteria traceability: links each criterion (e.g. `AC-1`) to planned tasks, specialist roles, agent decisions, and audit events, while reporting uncovered criteria as `UNCOVERED`.
+   - Honest capability accounting: explicitly distinguishes verified requirements and specialist analysis from runtime capabilities not executed by this application (`sourceCodeGeneration=NOT_SUPPORTED`, `buildExecution=NOT_SUPPORTED`, `automatedTestExecution=UNVERIFIED`, `deploymentAndRelease=NOT_SUPPORTED`).
+   - Read-only operator observability APIs (`/history`, `/evidence`, `/summary`) protected by token authorization (`X-Operator-Token`, `X-Auth-Token`, or `Authorization: Bearer <token>`).
+   - Secret-redaction safeguards: tokens, credentials, full LLM prompts, and raw secret payloads are strictly excluded from audit events and API responses.
+
 ---
 
 ## Workflow Lifecycle & States
@@ -143,6 +151,7 @@ LinkForge provides resilient stage execution and graceful workflow termination:
 | `linkforge.workflow.security.clarification-token` | `LINKFORGE_WORKFLOW_CLARIFICATION_TOKEN` | `dev-clarification-token` | Shared secret token required for clarification submission |
 | `linkforge.workflow.security.approval-token` | `LINKFORGE_WORKFLOW_APPROVAL_TOKEN` | `dev-approval-token` | Shared secret token required for human plan approval submission |
 | `linkforge.workflow.security.cancellation-token` | `LINKFORGE_WORKFLOW_CANCELLATION_TOKEN` | `dev-cancellation-token` | Shared secret token required for workflow cancellation/stop |
+| `linkforge.workflow.security.operator-token` | `LINKFORGE_WORKFLOW_OPERATOR_TOKEN` | `dev-operator-token` | Shared secret token required for read-only operator observability endpoints |
 | `linkforge.workflow.security.default-canceller` | `LINKFORGE_WORKFLOW_DEFAULT_CANCELLER` | `operator` | Fallback canceller identifier when not explicitly provided |
 
 ### Bounded Retry & Failure Recovery (`application.properties`)
@@ -369,6 +378,188 @@ X-Auth-Token: dev-cancellation-token
 
 ---
 
+### 4. Workflow Evidence, Audit History & Observability APIs
+
+#### A. Workflow Summary (`GET /api/v1/workflows/{id}/summary`)
+Returns high-level status, revision count, scenario classification, event/task counts, and evidence completeness.
+
+```http
+GET /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/summary
+Authorization: Bearer dev-operator-token
+```
+
+**Response (200 OK)**:
+```json
+{
+  "workflowId": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
+  "status": "COMPLETED",
+  "currentStage": "FINISHED",
+  "requirementRevision": 1,
+  "scenario": "GREENFIELD",
+  "totalTasks": 2,
+  "completedTasks": 2,
+  "totalSpecialistDecisions": 2,
+  "totalAuditEvents": 6,
+  "clarificationCount": 0,
+  "planApproved": true,
+  "cancelled": false,
+  "evidenceCompleteness": {
+    "totalCriteria": 3,
+    "addressedCriteriaCount": 3,
+    "plannedCriteriaCount": 3,
+    "coveragePercentage": 100.0,
+    "hasCodebaseEvidence": false,
+    "sourceCodeGenerationSupported": false,
+    "buildExecutionSupported": false,
+    "automatedTestExecutionVerified": false,
+    "deploymentSupported": false,
+    "unverifiedCapabilities": [
+      "source-code-generation",
+      "build-execution",
+      "automated-test-execution",
+      "deployment-and-release"
+    ]
+  },
+  "createdAt": "2026-10-06T15:15:00Z",
+  "updatedAt": "2026-10-06T15:20:00Z"
+}
+```
+
+#### B. Audit History & Event Timeline (`GET /api/v1/workflows/{id}/history` or `GET .../events`)
+Returns chronological, database-backed state transitions, agent decisions, gate approvals, and retry attempts.
+
+```http
+GET /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/history
+X-Operator-Token: dev-operator-token
+```
+
+**Response (200 OK)**:
+```json
+{
+  "workflowId": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
+  "status": "COMPLETED",
+  "currentStage": "FINISHED",
+  "totalEvents": 4,
+  "events": [
+    {
+      "timestamp": "2026-10-06T15:15:00Z",
+      "stage": "REQUIREMENT_ANALYSIS",
+      "eventType": "REQUIREMENT_ANALYSIS_COMPLETED",
+      "details": "Requirement analyzed with 3 acceptance criteria",
+      "metadata": {
+        "scenario": "GREENFIELD",
+        "criteriaCount": "3"
+      }
+    },
+    {
+      "timestamp": "2026-10-06T15:15:02Z",
+      "stage": "PLAN_APPROVAL",
+      "eventType": "PLAN_APPROVAL_PAUSED",
+      "details": "Workflow paused awaiting human plan approval",
+      "metadata": {
+        "planHash": "3f8b1c4a...",
+        "taskCount": "2"
+      }
+    },
+    {
+      "timestamp": "2026-10-06T15:20:00Z",
+      "stage": "PLAN_APPROVAL",
+      "eventType": "PLAN_APPROVED",
+      "details": "Plan approved by lead-architect@example.com",
+      "metadata": {
+        "approver": "lead-architect@example.com"
+      }
+    },
+    {
+      "timestamp": "2026-10-06T15:20:05Z",
+      "stage": "FINISHED",
+      "eventType": "WORKFLOW_COMPLETED",
+      "details": "Specialist coordination finished with 2 tasks",
+      "metadata": {
+        "completedTasks": "2"
+      }
+    }
+  ],
+  "retrievedAt": "2026-10-06T15:25:00Z"
+}
+```
+
+#### C. Evidence & Acceptance-Criteria Traceability (`GET /api/v1/workflows/{id}/evidence` or `GET .../traceability`)
+Maps each acceptance criterion to planned tasks, specialist agent findings, and verification bounds. Local filesystem paths are completely omitted, and event-level linkage is clearly indicated when not established.
+
+```http
+GET /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/evidence
+X-Operator-Token: dev-operator-token
+```
+
+**Response (200 OK)**:
+```json
+{
+  "workflowId": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
+  "scenario": "GREENFIELD",
+  "status": "COMPLETED",
+  "currentStage": "FINISHED",
+  "planHash": "3f8b1c4a...",
+  "planApproved": true,
+  "codebaseEvidenceAvailable": false,
+  "criteriaEvidence": [
+    {
+      "criterionId": "AC-1",
+      "criterionText": "Given a valid HTTP or HTTPS destination URL, when a short link is requested, then a unique short token is generated",
+      "status": "ANALYZED",
+      "plannedTaskIds": ["TASK-1"],
+      "specialistRoles": ["DATA_PERSISTENCE"],
+      "specialistFindings": [
+        {
+          "taskId": "TASK-1",
+          "agentName": "data-persistence-specialist",
+          "specialistRole": "DATA_PERSISTENCE",
+          "executionStatus": "SUCCESS",
+          "provider": "ollama",
+          "model": "llama3.2",
+          "fallbackOccurred": false,
+          "fallbackReason": null,
+          "recommendations": ["Use concurrent hash map or SQL unique index on alias column"],
+          "testIdeas": ["Test collision resistance under concurrent token insertions"]
+        }
+      ],
+      "relevantEventTypes": [],
+      "eventLinkageStatus": "EVENT_LEVEL_LINKAGE_UNAVAILABLE",
+      "hasPersistedEvidence": true
+    }
+  ],
+  "taskTraceability": [
+    {
+      "taskId": "TASK-1",
+      "title": "Core Domain Models & Thread-Safe Store",
+      "taskStatus": "COMPLETED",
+      "specialistRole": "DATA_PERSISTENCE",
+      "dependencies": [],
+      "addressedCriteria": ["AC-1"],
+      "specialistExecuted": true,
+      "specialistAgentName": "data-persistence-specialist",
+      "specialistExecutionStatus": "SUCCESS"
+    }
+  ],
+  "verificationStatus": {
+    "requirementAnalysis": "COMPLETED",
+    "scenarioClassification": "GREENFIELD",
+    "codebaseInspection": "NOT_APPLICABLE (GREENFIELD)",
+    "taskPlanning": "COMPLETED",
+    "humanApprovalGate": "APPROVED",
+    "specialistAnalysis": "COMPLETED",
+    "sourceCodeGeneration": "NOT_SUPPORTED",
+    "buildExecution": "NOT_SUPPORTED",
+    "automatedTestExecution": "UNVERIFIED",
+    "deploymentAndRelease": "NOT_SUPPORTED"
+  },
+  "eventLinkageStatus": "EVENT_LEVEL_LINKAGE_UNAVAILABLE",
+  "generatedAt": "2026-10-06T15:25:00Z"
+}
+```
+
+---
+
 ## URL Shortener API
 
 - `POST /api/v1/links`: Shorten a valid HTTP/HTTPS URL with optional custom alias (`201 Created`).
@@ -390,4 +581,10 @@ Execute the complete automated test suite without external dependencies:
 
 # Run Milestone 7 safe stop and cancellation API integration tests
 ./mvnw test -Dtest=WorkflowRetryAndCancellationIntegrationTest
+
+# Run Milestone 8 workflow evidence and observability service tests
+./mvnw test -Dtest=WorkflowEvidenceAndObservabilityServiceTest
+
+# Run Milestone 8 operator observability API integration tests
+./mvnw test -Dtest=WorkflowEvidenceAndObservabilityIntegrationTest
 ```

@@ -53,3 +53,50 @@ CREATE TABLE IF NOT EXISTS workflow_cancellations (
 
 CREATE INDEX IF NOT EXISTS idx_cancellations_workflow_id ON workflow_cancellations(workflow_id);
 
+CREATE TABLE IF NOT EXISTS workflow_runs (
+    id VARCHAR(36) PRIMARY KEY,
+    original_requirement CLOB NOT NULL,
+    requirement CLOB NOT NULL,
+    repository_path VARCHAR(1024),
+    scenario VARCHAR(32),
+    status VARCHAR(32) NOT NULL,
+    current_stage VARCHAR(64) NOT NULL,
+    plan_hash VARCHAR(64),
+    acceptance_criteria_json CLOB,
+    assumptions_json CLOB,
+    unanswered_questions_json CLOB,
+    tasks_json CLOB,
+    specialist_invocations_json CLOB,
+    repository_evidence_json CLOB,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status);
+
+CREATE TABLE IF NOT EXISTS workflow_events (
+    id VARCHAR(36) PRIMARY KEY,
+    workflow_id VARCHAR(36) NOT NULL,
+    event_type VARCHAR(128) NOT NULL,
+    stage VARCHAR(64) NOT NULL,
+    description VARCHAR(2048) NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_events_workflow_id ON workflow_events(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_events_timestamp ON workflow_events(timestamp ASC);
+
+CREATE TABLE IF NOT EXISTS workflow_agent_decisions (
+    id VARCHAR(36) PRIMARY KEY,
+    workflow_id VARCHAR(36) NOT NULL,
+    agent_name VARCHAR(128) NOT NULL,
+    agent_type VARCHAR(64) NOT NULL,
+    decision VARCHAR(256) NOT NULL,
+    rationale VARCHAR(2048),
+    metadata_json CLOB,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_workflow_id ON workflow_agent_decisions(workflow_id);
+CREATE INDEX IF NOT EXISTS idx_agent_decisions_timestamp ON workflow_agent_decisions(timestamp ASC);
+

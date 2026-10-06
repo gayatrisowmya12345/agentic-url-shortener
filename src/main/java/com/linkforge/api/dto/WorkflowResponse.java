@@ -36,7 +36,8 @@ public record WorkflowResponse(
         List<AgentDecision> agentDecisions,
         Instant createdAt,
         Instant updatedAt,
-        WorkflowCancellation cancellation
+        WorkflowCancellation cancellation,
+        WorkflowSummaryResponse summary
 ) {
     public static WorkflowResponse from(WorkflowRun run) {
         String repoSummary = run.getRepositoryEvidence() != null
@@ -66,7 +67,8 @@ public record WorkflowResponse(
                 run.getAgentDecisions(),
                 run.getCreatedAt(),
                 run.getUpdatedAt(),
-                run.getCancellation()
+                run.getCancellation(),
+                WorkflowSummaryResponse.from(run)
         );
     }
 }

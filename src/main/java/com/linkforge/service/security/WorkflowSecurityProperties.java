@@ -14,6 +14,7 @@ public class WorkflowSecurityProperties {
     private String clarificationToken = "dev-clarification-token";
     private String approvalToken = "dev-approval-token";
     private String cancellationToken = "dev-cancellation-token";
+    private String operatorToken = "dev-operator-token";
     private String defaultSubmitter = "operator";
     private String defaultApprover = "authorized-approver";
     private String defaultCanceller = "operator";
@@ -48,6 +49,14 @@ public class WorkflowSecurityProperties {
 
     public void setCancellationToken(String cancellationToken) {
         this.cancellationToken = cancellationToken;
+    }
+
+    public String getOperatorToken() {
+        return operatorToken;
+    }
+
+    public void setOperatorToken(String operatorToken) {
+        this.operatorToken = operatorToken;
     }
 
     public String getDefaultSubmitter() {

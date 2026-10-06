@@ -142,7 +142,7 @@ public class CodebaseInspector {
         log.info("Safe codebase inspection completed for '{}': {} files, languages {}", repositoryPathString, counters[0], languages);
 
         return new RepositoryEvidence(
-                repoPath.toString(),
+                repoPath.getFileName() != null ? repoPath.getFileName().toString() : repositoryPathString,
                 counters[0],
                 totalSize[0],
                 new ArrayList<>(languages),
@@ -162,7 +162,7 @@ public class CodebaseInspector {
             }
             return root.toRealPath();
         } catch (IOException e) {
-            throw new InvalidRepositoryPathException("Failed to canonicalize approved root directory: " + properties.getApprovedRoot(), e);
+            throw new InvalidRepositoryPathException("Failed to canonicalize approved root directory.", e);
         }
     }
 
@@ -171,7 +171,7 @@ public class CodebaseInspector {
 
         // 1. Reject absolute paths - repository paths must be relative to the approved root
         if (input.isAbsolute()) {
-            throw new InvalidRepositoryPathException("Absolute repository paths are rejected. Repository paths must be relative to the approved root: " + pathString);
+            throw new InvalidRepositoryPathException("Absolute repository paths are rejected. Repository paths must be relative to the approved root.");
         }
 
         // 2. Reject directory traversal attempts
@@ -201,7 +201,7 @@ public class CodebaseInspector {
         }
 
         if (!realPath.startsWith(approvedRoot)) {
-            throw new PathTraversalException("Repository path escapes approved root boundary: " + pathString + " -> " + realPath);
+            throw new PathTraversalException("Repository path escapes approved root boundary: " + pathString);
         }
 
         return realPath;
@@ -213,11 +213,11 @@ public class CodebaseInspector {
             // A symlink target elsewhere under the approved root still counts as outside the selected repository
             if (!target.startsWith(repoPath)) {
                 throw new SymlinkEscapeException(
-                        "Symbolic link escapes selected repository boundary: " + link + " points outside repository to " + target
+                        "Symbolic link escapes selected repository boundary: " + (link.getFileName() != null ? link.getFileName() : link) + " points outside repository"
                 );
             }
         } catch (IOException e) {
-            throw new SymlinkEscapeException("Symbolic link target cannot be safely resolved: " + link, e);
+            throw new SymlinkEscapeException("Symbolic link target cannot be safely resolved: " + (link.getFileName() != null ? link.getFileName() : link), e);
         }
     }
 

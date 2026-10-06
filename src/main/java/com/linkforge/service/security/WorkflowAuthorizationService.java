@@ -49,6 +49,24 @@ public class WorkflowAuthorizationService {
         }
     }
 
+    public void authorizeOperator(String authHeader, String tokenHeader) {
+        if (!securityProperties.isEnabled()) {
+            return;
+        }
+
+        String presentedToken = extractToken(authHeader, tokenHeader);
+        if (presentedToken == null || !isValidOperatorToken(presentedToken)) {
+            throw new WorkflowAuthorizationException("Unauthorized: Valid operator authorization token is required.");
+        }
+    }
+
+    private boolean isValidOperatorToken(String token) {
+        return secureEquals(token, securityProperties.getOperatorToken())
+                || secureEquals(token, securityProperties.getCancellationToken())
+                || secureEquals(token, securityProperties.getApprovalToken())
+                || secureEquals(token, securityProperties.getClarificationToken());
+    }
+
     public String resolveSubmitter(String headerSubmitter, String bodySubmitter) {
         if (bodySubmitter != null && !bodySubmitter.isBlank()) {
             return bodySubmitter.trim();

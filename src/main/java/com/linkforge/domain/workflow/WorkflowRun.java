@@ -43,13 +43,23 @@ public class WorkflowRun {
     }
 
     public WorkflowRun(String requirement, String repositoryPath) {
-        this.id = UUID.randomUUID().toString();
-        this.originalRequirement = requirement;
+        this(UUID.randomUUID().toString(), requirement, requirement, repositoryPath, Instant.now());
+    }
+
+    public WorkflowRun(
+            String id,
+            String originalRequirement,
+            String requirement,
+            String repositoryPath,
+            Instant createdAt
+    ) {
+        this.id = id != null ? id : UUID.randomUUID().toString();
+        this.originalRequirement = originalRequirement;
         this.requirement = requirement;
         this.repositoryPath = repositoryPath;
         this.status = WorkflowStatus.CREATED;
         this.currentStage = WorkflowStage.INTAKE;
-        this.createdAt = Instant.now();
+        this.createdAt = createdAt != null ? createdAt : Instant.now();
         this.updatedAt = this.createdAt;
     }
 
@@ -263,5 +273,31 @@ public class WorkflowRun {
 
     public synchronized List<SpecialistInvocation> getSpecialistInvocations() {
         return Collections.unmodifiableList(new ArrayList<>(specialistInvocations));
+    }
+
+    public synchronized void setStatus(WorkflowStatus status) {
+        this.status = status;
+    }
+
+    public synchronized void setCurrentStage(WorkflowStage currentStage) {
+        this.currentStage = currentStage;
+    }
+
+    public synchronized void setUpdatedAt(Instant updatedAt) {
+        this.updatedAt = updatedAt;
+    }
+
+    public synchronized void setEvents(List<WorkflowEvent> events) {
+        this.events.clear();
+        if (events != null) {
+            this.events.addAll(events);
+        }
+    }
+
+    public synchronized void setAgentDecisions(List<AgentDecision> agentDecisions) {
+        this.agentDecisions.clear();
+        if (agentDecisions != null) {
+            this.agentDecisions.addAll(agentDecisions);
+        }
     }
 }
