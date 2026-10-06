@@ -5,6 +5,8 @@ import com.linkforge.domain.link.exception.AliasConflictException;
 import com.linkforge.domain.link.exception.InvalidAliasException;
 import com.linkforge.domain.link.exception.InvalidDestinationUrlException;
 import com.linkforge.domain.link.exception.LinkNotFoundException;
+import com.linkforge.domain.workflow.scenario.exception.InspectionException;
+import com.linkforge.domain.workflow.scenario.exception.InspectionSecurityException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.validation.FieldError;
@@ -39,6 +41,24 @@ public class LinkExceptionHandler {
     public ResponseEntity<ApiErrorResponse> handleLinkNotFound(LinkNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiErrorResponse.of("LINK_NOT_FOUND", ex.getMessage()));
+    }
+
+    @ExceptionHandler(InspectionSecurityException.class)
+    public ResponseEntity<ApiErrorResponse> handleInspectionSecurity(InspectionSecurityException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("SECURITY_VIOLATION", ex.getMessage()));
+    }
+
+    @ExceptionHandler(InspectionException.class)
+    public ResponseEntity<ApiErrorResponse> handleInspectionException(InspectionException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiErrorResponse.of("INSPECTION_ERROR", ex.getMessage()));
+    }
+
+    @ExceptionHandler(IllegalStateException.class)
+    public ResponseEntity<ApiErrorResponse> handleIllegalState(IllegalStateException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiErrorResponse.of("INVALID_WORKFLOW_STATE", ex.getMessage()));
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

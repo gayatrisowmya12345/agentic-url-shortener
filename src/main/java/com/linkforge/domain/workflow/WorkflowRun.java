@@ -1,5 +1,8 @@
 package com.linkforge.domain.workflow;
 
+import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
+import com.linkforge.domain.workflow.scenario.Scenario;
+
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -10,6 +13,11 @@ public class WorkflowRun {
 
     private final String id;
     private final String requirement;
+    private String repositoryPath;
+    private Scenario scenario;
+    private RepositoryEvidence repositoryEvidence;
+    private AgentDecision classificationDecision;
+
     private WorkflowStatus status;
     private WorkflowStage currentStage;
     private final Instant createdAt;
@@ -24,8 +32,13 @@ public class WorkflowRun {
     private final List<AgentDecision> agentDecisions = new ArrayList<>();
 
     public WorkflowRun(String requirement) {
+        this(requirement, null);
+    }
+
+    public WorkflowRun(String requirement, String repositoryPath) {
         this.id = UUID.randomUUID().toString();
         this.requirement = requirement;
+        this.repositoryPath = repositoryPath;
         this.status = WorkflowStatus.CREATED;
         this.currentStage = WorkflowStage.INTAKE;
         this.createdAt = Instant.now();
@@ -45,6 +58,26 @@ public class WorkflowRun {
 
     public synchronized void addAgentDecision(AgentDecision decision) {
         this.agentDecisions.add(decision);
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void setScenario(Scenario scenario) {
+        this.scenario = scenario;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void setRepositoryPath(String repositoryPath) {
+        this.repositoryPath = repositoryPath;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void setRepositoryEvidence(RepositoryEvidence repositoryEvidence) {
+        this.repositoryEvidence = repositoryEvidence;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized void setClassificationDecision(AgentDecision classificationDecision) {
+        this.classificationDecision = classificationDecision;
         this.updatedAt = Instant.now();
     }
 
@@ -74,6 +107,22 @@ public class WorkflowRun {
 
     public String getRequirement() {
         return requirement;
+    }
+
+    public synchronized String getRepositoryPath() {
+        return repositoryPath;
+    }
+
+    public synchronized Scenario getScenario() {
+        return scenario;
+    }
+
+    public synchronized RepositoryEvidence getRepositoryEvidence() {
+        return repositoryEvidence;
+    }
+
+    public synchronized AgentDecision getClassificationDecision() {
+        return classificationDecision;
     }
 
     public synchronized WorkflowStatus getStatus() {

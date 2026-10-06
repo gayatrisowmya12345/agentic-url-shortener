@@ -118,6 +118,10 @@ public class RequirementInterpreterAgent {
     }
 
     public RequirementInterpretationResult interpret(String rawRequirement) {
+        return interpret(rawRequirement, null);
+    }
+
+    public RequirementInterpretationResult interpret(String rawRequirement, com.linkforge.domain.workflow.scenario.RepositoryEvidence evidence) {
         if (rawRequirement == null || rawRequirement.trim().isEmpty()) {
             return RequirementInterpretationResult.ambiguous(
                     "REJECT_EMPTY_REQUIREMENT",
@@ -134,15 +138,15 @@ public class RequirementInterpreterAgent {
         // Check if a model provider is configured and enabled
         if (modelProvider != null && modelProvider.isEnabled()) {
             try {
-                return executeModelInterpretation(rawRequirement);
+                return executeModelInterpretation(rawRequirement, evidence);
             } catch (Exception e) {
                 log.warn("Model-backed interpretation failed: '{}'. Executing deterministic fallback.", e.getMessage());
-                return executeDeterministicFallback(rawRequirement, e.getMessage());
+                return executeDeterministicFallback(rawRequirement, evidence, e.getMessage());
             }
         }
 
         // Pure deterministic path
-        return interpretDeterministic(rawRequirement, false, null);
+        return interpretDeterministic(rawRequirement, evidence, false, null);
     }
 
     public static boolean isGenuinelyAmbiguous(String rawRequirement) {
@@ -162,8 +166,15 @@ public class RequirementInterpreterAgent {
         return isVaguePrompt || (normalized.split("\\s+").length <= 6 && lacksSpecificAction);
     }
 
-    private RequirementInterpretationResult executeModelInterpretation(String rawRequirement) throws Exception {
-        String rawResponse = modelProvider.generate(SYSTEM_PROMPT, rawRequirement);
+    private RequirementInterpretationResult executeModelInterpretation(
+            String rawRequirement,
+            com.linkforge.domain.workflow.scenario.RepositoryEvidence evidence
+    ) throws Exception {
+        String prompt = rawRequirement;
+        if (evidence != null && evidence.hasEvidence()) {
+            prompt = prompt + "\n\nCODEBASE EVIDENCE:\n" + evidence.summary();
+        }
+        String rawResponse = modelProvider.generate(SYSTEM_PROMPT, prompt);
         StructuredRequirementAnalysis analysis = parseAndValidateModelOutput(rawResponse, rawRequirement);
 
         Map<String, Object> metadata = Map.of(
@@ -326,11 +337,20 @@ public class RequirementInterpreterAgent {
         return content.substring(firstBrace, lastBrace + 1).trim();
     }
 
-    private RequirementInterpretationResult executeDeterministicFallback(String rawRequirement, String failureReason) {
-        return interpretDeterministic(rawRequirement, true, failureReason);
+    private RequirementInterpretationResult executeDeterministicFallback(
+            String rawRequirement,
+            com.linkforge.domain.workflow.scenario.RepositoryEvidence evidence,
+            String failureReason
+    ) {
+        return interpretDeterministic(rawRequirement, evidence, true, failureReason);
     }
 
-    private RequirementInterpretationResult interpretDeterministic(String rawRequirement, boolean fallback, String fallbackReason) {
+    private RequirementInterpretationResult interpretDeterministic(
+            String rawRequirement,
+            com.linkforge.domain.workflow.scenario.RepositoryEvidence evidence,
+            boolean fallback,
+            String fallbackReason
+    ) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("agent", AGENT_NAME);
         metadata.put("type", fallback ? AGENT_TYPE_FALLBACK : AGENT_TYPE_DETERMINISTIC);
@@ -359,19 +379,25 @@ public class RequirementInterpreterAgent {
             );
         }
 
-        List<String> acceptanceCriteria = List.of(
+        List<String> acceptanceCriteria = new java.util.ArrayList<>(List.of(
                 "AC-1: Given a valid HTTP or HTTPS destination URL, when requested via API, the system generates a unique, non-colliding short token.",
                 "AC-2: Given an existing active short token, when resolving via GET request, the system issues an HTTP 302 redirect to the original destination URL.",
                 "AC-3: Given a malformed, invalid, or empty destination URL, the system rejects the creation request with an HTTP 400 Bad Request error response.",
                 "AC-4: Given an unknown or expired short token, the system returns an HTTP 404 Not Found error response.",
                 "AC-5: Given a successful redirection event, the system atomically increments the usage count and timestamps the access record."
-        );
+        ));
 
-        List<String> assumptions = List.of(
+        List<String> assumptions = new java.util.ArrayList<>(List.of(
                 "Short tokens are 6 to 8 alphanumeric characters.",
                 "Redirection targets are standard HTTP or HTTPS protocols.",
                 "Token collisions are resolved deterministically before persistence."
-        );
+        ));
+
+        if (evidence != null && evidence.hasEvidence()) {
+            String frameworks = evidence.detectedFrameworks().isEmpty() ? "codebase" : String.join(", ", evidence.detectedFrameworks());
+            assumptions.add("Integrates with existing " + frameworks + " architecture.");
+            acceptanceCriteria.add("AC-BROWNFIELD: Given existing repository (" + String.join(", ", evidence.projectFileNames()) + "), when modifying functionality, preserve existing conventions and dependency structure.");
+        }
 
         return RequirementInterpretationResult.clear(
                 "ACCEPT_AND_SYNTHESIZE",

@@ -1,6 +1,7 @@
 package com.linkforge.api;
 
 import com.linkforge.api.dto.CreateWorkflowRequest;
+import com.linkforge.api.dto.SubmitClarificationRequest;
 import com.linkforge.api.dto.WorkflowResponse;
 import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.service.WorkflowOrchestrator;
@@ -27,7 +28,7 @@ public class WorkflowController {
 
     @PostMapping
     public ResponseEntity<WorkflowResponse> createWorkflow(@Valid @RequestBody CreateWorkflowRequest request) {
-        WorkflowRun run = orchestrator.startWorkflow(request.requirement());
+        WorkflowRun run = orchestrator.startWorkflow(request.requirement(), request.repositoryPath());
         URI location = URI.create("/api/v1/workflows/" + run.getId());
         return ResponseEntity.created(location).body(WorkflowResponse.from(run));
     }
@@ -35,6 +36,16 @@ public class WorkflowController {
     @GetMapping("/{id}")
     public ResponseEntity<WorkflowResponse> getWorkflow(@PathVariable String id) {
         return orchestrator.getWorkflowRun(id)
+                .map(run -> ResponseEntity.ok(WorkflowResponse.from(run)))
+                .orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    @PostMapping({ "/{id}/clarifications", "/{id}/clarify" })
+    public ResponseEntity<WorkflowResponse> submitClarification(
+            @PathVariable String id,
+            @Valid @RequestBody SubmitClarificationRequest request
+    ) {
+        return orchestrator.submitClarification(id, request.clarification(), request.repositoryPath())
                 .map(run -> ResponseEntity.ok(WorkflowResponse.from(run)))
                 .orElseGet(() -> ResponseEntity.notFound().build());
     }

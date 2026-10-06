@@ -2,6 +2,8 @@ package com.linkforge.domain.workflow;
 
 public enum WorkflowStage {
     INTAKE,
+    SCENARIO_CLASSIFICATION,
+    CODEBASE_INSPECTION,
     REQUIREMENT_INTERPRETATION,
     TASK_PLANNING,
     FINISHED

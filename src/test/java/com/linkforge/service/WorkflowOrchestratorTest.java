@@ -54,6 +54,8 @@ class WorkflowOrchestratorTest {
         List<String> eventTypes = events.stream().map(WorkflowEvent::eventType).toList();
         assertThat(eventTypes).containsSequence(
                 "WORKFLOW_INITIALIZED",
+                "CLASSIFICATION_STARTED",
+                "SCENARIO_CLASSIFIED",
                 "INTERPRETATION_STARTED",
                 "REQUIREMENT_ACCEPTED",
                 "PLANNING_STARTED",
@@ -64,11 +66,13 @@ class WorkflowOrchestratorTest {
 
         // Verify Agent Decisions
         List<AgentDecision> decisions = run.getAgentDecisions();
-        assertThat(decisions).hasSize(2);
-        assertThat(decisions.get(0).agentName()).isEqualTo(RequirementInterpreterAgent.AGENT_NAME);
+        assertThat(decisions).hasSize(3);
+        assertThat(decisions.get(0).agentName()).isEqualTo(com.linkforge.agent.ScenarioClassifierAgent.AGENT_NAME);
         assertThat(decisions.get(0).agentType()).isEqualTo(AgentDecision.DETERMINISTIC_SPECIALIST);
-        assertThat(decisions.get(1).agentName()).isEqualTo(DependencyAwarePlannerAgent.AGENT_NAME);
+        assertThat(decisions.get(1).agentName()).isEqualTo(RequirementInterpreterAgent.AGENT_NAME);
         assertThat(decisions.get(1).agentType()).isEqualTo(AgentDecision.DETERMINISTIC_SPECIALIST);
+        assertThat(decisions.get(2).agentName()).isEqualTo(DependencyAwarePlannerAgent.AGENT_NAME);
+        assertThat(decisions.get(2).agentType()).isEqualTo(AgentDecision.DETERMINISTIC_SPECIALIST);
 
         // Verify Repository Persistence
         Optional<WorkflowRun> retrieved = orchestrator.getWorkflowRun(run.getId());
@@ -85,7 +89,7 @@ class WorkflowOrchestratorTest {
 
         assertThat(run).isNotNull();
         assertThat(run.getStatus()).isEqualTo(WorkflowStatus.WAITING_FOR_CLARIFICATION);
-        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.REQUIREMENT_INTERPRETATION);
+        assertThat(run.getCurrentStage()).isEqualTo(WorkflowStage.SCENARIO_CLASSIFICATION);
 
         // Clarification questions recorded
         assertThat(run.getUnansweredQuestions()).isNotEmpty();
@@ -98,14 +102,15 @@ class WorkflowOrchestratorTest {
         List<String> eventTypes = run.getEvents().stream().map(WorkflowEvent::eventType).toList();
         assertThat(eventTypes).contains(
                 "WORKFLOW_INITIALIZED",
-                "INTERPRETATION_STARTED",
+                "CLASSIFICATION_STARTED",
+                "SCENARIO_CLASSIFIED",
                 "AMBIGUITY_DETECTED",
                 "WORKFLOW_PAUSED"
         );
         assertThat(eventTypes).doesNotContain("PLANNING_STARTED", "PLAN_GENERATED", "WORKFLOW_COMPLETED");
 
-        // Only interpreter decision recorded
+        // Classifier decision recorded
         assertThat(run.getAgentDecisions()).hasSize(1);
-        assertThat(run.getAgentDecisions().get(0).agentName()).isEqualTo(RequirementInterpreterAgent.AGENT_NAME);
+        assertThat(run.getAgentDecisions().get(0).agentName()).isEqualTo(com.linkforge.agent.ScenarioClassifierAgent.AGENT_NAME);
     }
 }

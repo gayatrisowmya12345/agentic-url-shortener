@@ -48,7 +48,8 @@ class WorkflowControllerIntegrationTest {
                 .andExpect(jsonPath("$.tasks[0].taskId").value("TASK-1"))
                 .andExpect(jsonPath("$.tasks[1].dependencies[0]").value("TASK-1"))
                 .andExpect(jsonPath("$.events", not(empty())))
-                .andExpect(jsonPath("$.agentDecisions", hasSize(2)))
+                .andExpect(jsonPath("$.scenario").value("GREENFIELD"))
+                .andExpect(jsonPath("$.agentDecisions", hasSize(3)))
                 .andReturn();
 
         // Extract ID and test GET endpoint
@@ -75,7 +76,8 @@ class WorkflowControllerIntegrationTest {
                         .content(payload))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.status").value("WAITING_FOR_CLARIFICATION"))
-                .andExpect(jsonPath("$.currentStage").value("REQUIREMENT_INTERPRETATION"))
+                .andExpect(jsonPath("$.currentStage").value("SCENARIO_CLASSIFICATION"))
+                .andExpect(jsonPath("$.scenario").value("AMBIGUOUS"))
                 .andExpect(jsonPath("$.unansweredQuestions", not(empty())))
                 .andExpect(jsonPath("$.tasks", empty()))
                 .andExpect(jsonPath("$.agentDecisions", hasSize(1)));
