@@ -68,6 +68,8 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     tasks_json CLOB,
     specialist_invocations_json CLOB,
     repository_evidence_json CLOB,
+    implementation_proposal_json CLOB,
+    execution_record_json CLOB,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL
 );

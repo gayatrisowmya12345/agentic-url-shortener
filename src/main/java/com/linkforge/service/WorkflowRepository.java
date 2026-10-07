@@ -12,6 +12,8 @@ import com.linkforge.domain.workflow.WorkflowEvent;
 import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.domain.workflow.WorkflowStage;
 import com.linkforge.domain.workflow.WorkflowStatus;
+import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
+import com.linkforge.domain.workflow.implementation.ImplementationProposal;
 import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
 import com.linkforge.domain.workflow.scenario.Scenario;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
@@ -337,10 +339,12 @@ public class WorkflowRepository {
         String tasksJson = toJson(run.getTasks());
         String invocationsJson = toJson(run.getSpecialistInvocations());
         String repoEvidenceJson = toJson(run.getRepositoryEvidence());
+        String proposalJson = toJson(run.getImplementationProposal());
+        String executionRecordJson = toJson(run.getExecutionRecord());
 
         if (count != null && count > 0) {
             jdbcTemplate.update(
-                    "UPDATE workflow_runs SET requirement = ?, repository_path = ?, scenario = ?, status = ?, current_stage = ?, plan_hash = ?, acceptance_criteria_json = ?, assumptions_json = ?, unanswered_questions_json = ?, tasks_json = ?, specialist_invocations_json = ?, repository_evidence_json = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE workflow_runs SET requirement = ?, repository_path = ?, scenario = ?, status = ?, current_stage = ?, plan_hash = ?, acceptance_criteria_json = ?, assumptions_json = ?, unanswered_questions_json = ?, tasks_json = ?, specialist_invocations_json = ?, repository_evidence_json = ?, implementation_proposal_json = ?, execution_record_json = ?, updated_at = ? WHERE id = ?",
                     run.getRequirement(),
                     run.getRepositoryPath(),
                     run.getScenario() != null ? run.getScenario().name() : null,
@@ -353,12 +357,14 @@ public class WorkflowRepository {
                     tasksJson,
                     invocationsJson,
                     repoEvidenceJson,
+                    proposalJson,
+                    executionRecordJson,
                     Timestamp.from(run.getUpdatedAt()),
                     run.getId()
             );
         } else {
             jdbcTemplate.update(
-                    "INSERT INTO workflow_runs (id, original_requirement, requirement, repository_path, scenario, status, current_stage, plan_hash, acceptance_criteria_json, assumptions_json, unanswered_questions_json, tasks_json, specialist_invocations_json, repository_evidence_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO workflow_runs (id, original_requirement, requirement, repository_path, scenario, status, current_stage, plan_hash, acceptance_criteria_json, assumptions_json, unanswered_questions_json, tasks_json, specialist_invocations_json, repository_evidence_json, implementation_proposal_json, execution_record_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     run.getId(),
                     run.getOriginalRequirement(),
                     run.getRequirement(),
@@ -373,6 +379,8 @@ public class WorkflowRepository {
                     tasksJson,
                     invocationsJson,
                     repoEvidenceJson,
+                    proposalJson,
+                    executionRecordJson,
                     Timestamp.from(run.getCreatedAt()),
                     Timestamp.from(run.getUpdatedAt())
             );
@@ -484,6 +492,18 @@ public class WorkflowRepository {
                 if (repoEvidenceJson != null && !repoEvidenceJson.isBlank()) {
                     try {
                         run.setRepositoryEvidence(objectMapper.readValue(repoEvidenceJson, RepositoryEvidence.class));
+                    } catch (Exception ignored) {}
+                }
+                String proposalJson = rs.getString("implementation_proposal_json");
+                if (proposalJson != null && !proposalJson.isBlank()) {
+                    try {
+                        run.setImplementationProposal(objectMapper.readValue(proposalJson, ImplementationProposal.class));
+                    } catch (Exception ignored) {}
+                }
+                String execJson = rs.getString("execution_record_json");
+                if (execJson != null && !execJson.isBlank()) {
+                    try {
+                        run.setExecutionRecord(objectMapper.readValue(execJson, GovernedExecutionRecord.class));
                     } catch (Exception ignored) {}
                 }
 

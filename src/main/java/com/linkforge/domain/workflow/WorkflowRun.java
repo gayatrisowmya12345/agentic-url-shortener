@@ -1,5 +1,7 @@
 package com.linkforge.domain.workflow;
 
+import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
+import com.linkforge.domain.workflow.implementation.ImplementationProposal;
 import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
 import com.linkforge.domain.workflow.scenario.Scenario;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
@@ -37,6 +39,8 @@ public class WorkflowRun {
     private final List<WorkflowClarification> clarificationHistory = new ArrayList<>();
     private WorkflowApproval approval;
     private WorkflowCancellation cancellation;
+    private ImplementationProposal implementationProposal;
+    private GovernedExecutionRecord executionRecord;
 
     public WorkflowRun(String requirement) {
         this(requirement, null);
@@ -116,7 +120,8 @@ public class WorkflowRun {
 
     public synchronized void setTasks(List<PlannedTask> tasks) {
         this.tasks = tasks != null ? List.copyOf(tasks) : Collections.emptyList();
-        String newHash = PlanHasher.computePlanHash(this.tasks);
+        String propHash = this.implementationProposal != null ? this.implementationProposal.proposalHash() : null;
+        String newHash = PlanHasher.computePlanHash(this.tasks, propHash);
         if (this.currentPlanHash != null && !this.currentPlanHash.equals(newHash)) {
             if (this.approval != null && !this.approval.planHash().equals(newHash)) {
                 this.approval = null; // Invalidate approval if plan hash changes
@@ -299,5 +304,23 @@ public class WorkflowRun {
         if (agentDecisions != null) {
             this.agentDecisions.addAll(agentDecisions);
         }
+    }
+
+    public synchronized ImplementationProposal getImplementationProposal() {
+        return implementationProposal;
+    }
+
+    public synchronized void setImplementationProposal(ImplementationProposal implementationProposal) {
+        this.implementationProposal = implementationProposal;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized GovernedExecutionRecord getExecutionRecord() {
+        return executionRecord;
+    }
+
+    public synchronized void setExecutionRecord(GovernedExecutionRecord executionRecord) {
+        this.executionRecord = executionRecord;
+        this.updatedAt = Instant.now();
     }
 }

@@ -10,6 +10,9 @@ import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
 
+import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
+import com.linkforge.domain.workflow.implementation.ImplementationProposal;
+
 import java.time.Instant;
 import java.util.List;
 
@@ -37,7 +40,9 @@ public record WorkflowResponse(
         Instant createdAt,
         Instant updatedAt,
         WorkflowCancellation cancellation,
-        WorkflowSummaryResponse summary
+        WorkflowSummaryResponse summary,
+        ImplementationProposal implementationProposal,
+        GovernedExecutionRecord executionRecord
 ) {
     public static WorkflowResponse from(WorkflowRun run) {
         String repoSummary = run.getRepositoryEvidence() != null
@@ -68,7 +73,9 @@ public record WorkflowResponse(
                 run.getCreatedAt(),
                 run.getUpdatedAt(),
                 run.getCancellation(),
-                WorkflowSummaryResponse.from(run)
+                WorkflowSummaryResponse.from(run),
+                run.getImplementationProposal(),
+                run.getExecutionRecord()
         );
     }
 }

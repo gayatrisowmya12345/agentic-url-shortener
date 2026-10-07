@@ -18,6 +18,8 @@ import com.linkforge.domain.workflow.WorkflowEvent;
 import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.domain.workflow.WorkflowStage;
 import com.linkforge.domain.workflow.WorkflowStatus;
+import com.linkforge.domain.workflow.implementation.BuildValidationResult;
+import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
 import com.linkforge.domain.workflow.scenario.Scenario;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
 import com.linkforge.service.evidence.WorkflowEvidenceService;
@@ -308,5 +310,97 @@ class WorkflowEvidenceAndObservabilityServiceTest {
         assertThat(json).doesNotContain("dev-operator-token");
         assertThat(json).doesNotContain("dev-approval-token");
         assertThat(json).doesNotContain("dev-cancellation-token");
+    }
+
+    @Test
+    @DisplayName("Evidence view reports targeted test execution as verified when governed test command succeeds")
+    void evidenceViewReportsTargetedTestExecutionVerifiedWhenBuildSucceeds() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode test -Dtest=CustomAliasValidationTest",
+                0,
+                3200,
+                "[INFO] BUILD SUCCESS",
+                "SUCCESS",
+                Instant.now()
+        );
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-123",
+                run.getId(),
+                "COMPLETED",
+                "FINISHED",
+                "hash-123",
+                null,
+                List.of(),
+                buildResult,
+                null,
+                null,
+                Instant.now(),
+                Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        assertThat(status.sourceCodeGeneration()).isEqualTo("VERIFIED (ISOLATED_PROPOSAL)");
+        assertThat(status.buildExecution()).isEqualTo("VERIFIED (MAVEN_WRAPPER_BUILD)");
+        assertThat(status.automatedTestExecution()).isEqualTo("VERIFIED (TARGETED_TEST_EXECUTION)");
+        assertThat(status.deploymentAndRelease()).isEqualTo("NOT_SUPPORTED");
+    }
+
+    @Test
+    @DisplayName("Evidence view accurately distinguishes non-success execution cases: blocked, timed-out, rolled-back, failed, and plan-only")
+    void evidenceViewAccuratelyDistinguishesNonSuccessCases() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+
+        // 1. Plan-only (no execution record)
+        run.setExecutionRecord(null);
+        ExecutionVerificationStatus planOnly = evidenceService.buildEvidenceResponse(run).verificationStatus();
+        assertThat(planOnly.sourceCodeGeneration()).isEqualTo("NOT_SUPPORTED");
+        assertThat(planOnly.buildExecution()).isEqualTo("NOT_SUPPORTED");
+        assertThat(planOnly.automatedTestExecution()).isEqualTo("UNVERIFIED");
+
+        // 2. Blocked
+        run.setExecutionRecord(new GovernedExecutionRecord(
+                "exec-blocked", run.getId(), "BLOCKED", "INITIALIZED", "hash", null, List.of(), null, null, "Untrusted repo", Instant.now(), Instant.now()
+        ));
+        ExecutionVerificationStatus blocked = evidenceService.buildEvidenceResponse(run).verificationStatus();
+        assertThat(blocked.sourceCodeGeneration()).isEqualTo("BLOCKED");
+        assertThat(blocked.buildExecution()).isEqualTo("BLOCKED");
+        assertThat(blocked.automatedTestExecution()).isEqualTo("BLOCKED");
+
+        // 3. Timed out
+        run.setExecutionRecord(new GovernedExecutionRecord(
+                "exec-timeout", run.getId(), "TIMED_OUT", "VALIDATING", "hash", null, List.of(),
+                new BuildValidationResult("./mvnw test", -1, 60000, "Timeout", "TIMED_OUT", Instant.now()),
+                null, "Timed out after 60s", Instant.now(), Instant.now()
+        ));
+        ExecutionVerificationStatus timedOut = evidenceService.buildEvidenceResponse(run).verificationStatus();
+        assertThat(timedOut.sourceCodeGeneration()).isEqualTo("FAILED (TIMED_OUT)");
+        assertThat(timedOut.buildExecution()).isEqualTo("TIMED_OUT");
+        assertThat(timedOut.automatedTestExecution()).isEqualTo("FAILED (TIMED_OUT)");
+
+        // 4. Rolled back
+        run.setExecutionRecord(new GovernedExecutionRecord(
+                "exec-rollback", run.getId(), "ROLLED_BACK", "ROLLING_BACK", "hash", null, List.of(),
+                new BuildValidationResult("./mvnw test", 1, 1200, "Build failure", "BUILD_FAILED", Instant.now()),
+                null, "Compilation failed", Instant.now(), Instant.now()
+        ));
+        ExecutionVerificationStatus rolledBack = evidenceService.buildEvidenceResponse(run).verificationStatus();
+        assertThat(rolledBack.sourceCodeGeneration()).isEqualTo("ROLLED_BACK (VERIFIED_RESTORATION)");
+        assertThat(rolledBack.buildExecution()).isEqualTo("FAILED (ROLLED_BACK)");
+        assertThat(rolledBack.automatedTestExecution()).isEqualTo("FAILED (ROLLED_BACK)");
+
+        // 5. Failed
+        run.setExecutionRecord(new GovernedExecutionRecord(
+                "exec-failed", run.getId(), "FAILED", "VALIDATING", "hash", null, List.of(),
+                new BuildValidationResult("./mvnw test", 1, 1500, "Error", "FAILED", Instant.now()),
+                null, "Execution failure", Instant.now(), Instant.now()
+        ));
+        ExecutionVerificationStatus failed = evidenceService.buildEvidenceResponse(run).verificationStatus();
+        assertThat(failed.sourceCodeGeneration()).isEqualTo("FAILED");
+        assertThat(failed.buildExecution()).isEqualTo("FAILED");
+        assertThat(failed.automatedTestExecution()).isEqualTo("FAILED");
     }
 }

@@ -14,10 +14,13 @@ import com.linkforge.domain.workflow.specialist.SpecialistCriteriaMapper;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
 import org.springframework.stereotype.Service;
 
+import com.linkforge.domain.workflow.implementation.BuildValidationResult;
+import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -222,6 +225,57 @@ public class WorkflowEvidenceService {
             specialistAnalysis = allSuccess ? "COMPLETED" : "PARTIAL";
         }
 
+        String sourceCodeGeneration;
+        String buildExecution;
+        String automatedTestExecution;
+
+        GovernedExecutionRecord execRecord = run.getExecutionRecord();
+        if (execRecord == null) {
+            sourceCodeGeneration = "NOT_SUPPORTED";
+            buildExecution = "NOT_SUPPORTED";
+            automatedTestExecution = "UNVERIFIED";
+        } else {
+            String execStatus = execRecord.status() != null ? execRecord.status().toUpperCase(Locale.ROOT) : "";
+            BuildValidationResult buildResult = execRecord.buildValidation();
+            boolean isTestCommand = buildResult != null && buildResult.command() != null && buildResult.command().contains("test");
+            boolean testSucceeded = "COMPLETED".equals(execStatus) && buildResult != null && buildResult.isSuccess();
+
+            switch (execStatus) {
+                case "COMPLETED" -> {
+                    sourceCodeGeneration = "VERIFIED (ISOLATED_PROPOSAL)";
+                    buildExecution = "VERIFIED (MAVEN_WRAPPER_BUILD)";
+                    automatedTestExecution = (testSucceeded && isTestCommand)
+                            ? "VERIFIED (TARGETED_TEST_EXECUTION)"
+                            : "UNVERIFIED";
+                }
+                case "TIMED_OUT" -> {
+                    sourceCodeGeneration = "FAILED (TIMED_OUT)";
+                    buildExecution = "TIMED_OUT";
+                    automatedTestExecution = "FAILED (TIMED_OUT)";
+                }
+                case "ROLLED_BACK" -> {
+                    sourceCodeGeneration = "ROLLED_BACK (VERIFIED_RESTORATION)";
+                    buildExecution = "FAILED (ROLLED_BACK)";
+                    automatedTestExecution = "FAILED (ROLLED_BACK)";
+                }
+                case "BLOCKED" -> {
+                    sourceCodeGeneration = "BLOCKED";
+                    buildExecution = "BLOCKED";
+                    automatedTestExecution = "BLOCKED";
+                }
+                case "FAILED" -> {
+                    sourceCodeGeneration = "FAILED";
+                    buildExecution = "FAILED";
+                    automatedTestExecution = "FAILED";
+                }
+                default -> {
+                    sourceCodeGeneration = "NOT_SUPPORTED";
+                    buildExecution = "NOT_SUPPORTED";
+                    automatedTestExecution = "UNVERIFIED";
+                }
+            }
+        }
+
         return new ExecutionVerificationStatus(
                 reqAnalysis,
                 scenarioClass,
@@ -229,9 +283,9 @@ public class WorkflowEvidenceService {
                 taskPlanning,
                 humanApproval,
                 specialistAnalysis,
-                "NOT_SUPPORTED",  // sourceCodeGeneration: LinkForge is read-only; no code mutation
-                "NOT_SUPPORTED",  // buildExecution: no target project build steps executed
-                "UNVERIFIED",     // automatedTestExecution: test ideas generated; runtime tests unexecuted
+                sourceCodeGeneration,
+                buildExecution,
+                automatedTestExecution,
                 "NOT_SUPPORTED"   // deploymentAndRelease: no deployment/release performed
         );
     }

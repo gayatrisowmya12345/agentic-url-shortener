@@ -119,9 +119,7 @@ public class LinkShortenerService {
     }
 
     private void validateCustomAlias(String alias) {
-        if (!ALIAS_PATTERN.matcher(alias).matches()) {
-            throw new InvalidAliasException("Custom alias must be between 3 and 64 characters and contain only alphanumeric characters, underscores, or hyphens.");
-        }
+        AliasValidator.validate(alias);
         if (RESERVED_IDENTIFIERS.contains(alias.toLowerCase())) {
             throw new InvalidAliasException("Custom alias '" + alias + "' is reserved by the system.");
         }

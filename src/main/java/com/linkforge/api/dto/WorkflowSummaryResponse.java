@@ -62,6 +62,14 @@ public record WorkflowSummaryResponse(
         boolean allExecuted = taskCount > 0 && completedTasks == taskCount;
         boolean hasCodebaseEvidence = run.getRepositoryEvidence() != null && run.getRepositoryEvidence().hasEvidence();
 
+        List<String> unverified = new java.util.ArrayList<>();
+        if (run.getExecutionRecord() == null || !"COMPLETED".equalsIgnoreCase(run.getExecutionRecord().status())) {
+            unverified.add("SOURCE_CODE_GENERATION");
+            unverified.add("BUILD_EXECUTION");
+        }
+        unverified.add("AUTOMATED_TEST_RUNS");
+        unverified.add("DEPLOYMENT");
+
         EvidenceCompleteness completeness = new EvidenceCompleteness(
                 totalCriteria,
                 addressedCount,
@@ -70,12 +78,7 @@ public record WorkflowSummaryResponse(
                 hasCodebaseEvidence,
                 allExecuted,
                 !allExecuted || addressedCount < totalCriteria,
-                List.of(
-                        "SOURCE_CODE_GENERATION",
-                        "BUILD_EXECUTION",
-                        "AUTOMATED_TEST_RUNS",
-                        "DEPLOYMENT"
-                )
+                unverified
         );
 
         return new WorkflowSummaryResponse(

@@ -40,6 +40,8 @@ import com.linkforge.service.retry.RetriesExhaustedException;
 import com.linkforge.service.retry.Sleeper;
 import com.linkforge.service.retry.WorkflowRetryProperties;
 import com.linkforge.service.security.InvalidPlanHashException;
+import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
+import com.linkforge.service.implementation.GovernedExecutionService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -55,9 +57,10 @@ import java.util.Optional;
  * 3. Codebase Inspection (for brownfield)
  * 4. Requirement Interpretation
  * 5. Task Planning
- * 6. Human Plan Approval Gate (pauses for authorized human approval)
+ * 6. Implementation Proposal & Human Plan Approval Gate (pauses for authorized human approval)
  * 7. Bounded Specialist Coordination with Idempotent Retry and Safe Stop
- * 8. Finished
+ * 8. Governed Implementation Execution & Build Verification in Isolated Workspace
+ * 9. Finished
  */
 @Service
 public class WorkflowOrchestrator {
@@ -72,6 +75,7 @@ public class WorkflowOrchestrator {
     private final TaskGraphCoordinator taskGraphCoordinator;
     private final WorkflowRetryProperties retryProperties;
     private final Sleeper sleeper;
+    private final GovernedExecutionService governedExecutionService;
 
     public WorkflowOrchestrator(
             RequirementInterpreterAgent requirementInterpreterAgent,
@@ -86,7 +90,8 @@ public class WorkflowOrchestrator {
                 workflowRepository,
                 createDefaultTaskGraphCoordinator(),
                 new WorkflowRetryProperties(),
-                Sleeper.SYSTEM
+                Sleeper.SYSTEM,
+                null
         );
     }
 
@@ -105,7 +110,8 @@ public class WorkflowOrchestrator {
                 workflowRepository,
                 createDefaultTaskGraphCoordinator(),
                 new WorkflowRetryProperties(),
-                Sleeper.SYSTEM
+                Sleeper.SYSTEM,
+                null
         );
     }
 
@@ -125,7 +131,8 @@ public class WorkflowOrchestrator {
                 workflowRepository,
                 taskGraphCoordinator,
                 new WorkflowRetryProperties(),
-                Sleeper.SYSTEM
+                Sleeper.SYSTEM,
+                null
         );
     }
 
@@ -138,7 +145,8 @@ public class WorkflowOrchestrator {
             WorkflowRepository workflowRepository,
             TaskGraphCoordinator taskGraphCoordinator,
             @Autowired(required = false) WorkflowRetryProperties retryProperties,
-            @Autowired(required = false) Sleeper sleeper
+            @Autowired(required = false) Sleeper sleeper,
+            @Autowired(required = false) GovernedExecutionService governedExecutionService
     ) {
         this.scenarioClassifierAgent = scenarioClassifierAgent;
         this.codebaseInspector = codebaseInspector;
@@ -148,6 +156,7 @@ public class WorkflowOrchestrator {
         this.taskGraphCoordinator = taskGraphCoordinator != null ? taskGraphCoordinator : createDefaultTaskGraphCoordinator();
         this.retryProperties = retryProperties != null ? retryProperties : new WorkflowRetryProperties();
         this.sleeper = sleeper != null ? sleeper : Sleeper.SYSTEM;
+        this.governedExecutionService = governedExecutionService;
     }
 
     public WorkflowOrchestrator withSleeper(Sleeper customSleeper) {
@@ -159,7 +168,8 @@ public class WorkflowOrchestrator {
                 this.workflowRepository,
                 this.taskGraphCoordinator,
                 this.retryProperties,
-                customSleeper
+                customSleeper,
+                this.governedExecutionService
         );
     }
 
@@ -172,7 +182,8 @@ public class WorkflowOrchestrator {
                 this.workflowRepository,
                 this.taskGraphCoordinator,
                 customRetryProperties,
-                this.sleeper
+                this.sleeper,
+                this.governedExecutionService
         );
     }
 
@@ -293,7 +304,7 @@ public class WorkflowOrchestrator {
             return Optional.of(run);
         }
 
-        if (run.getStatus() != WorkflowStatus.WAITING_FOR_APPROVAL) {
+        if (run.getStatus() != WorkflowStatus.WAITING_FOR_APPROVAL && run.getStatus() != WorkflowStatus.PROPOSED) {
             throw new IllegalStateException("Workflow '" + workflowId + "' is not waiting for approval. Current status: " + run.getStatus());
         }
 
@@ -854,5 +865,27 @@ public class WorkflowOrchestrator {
 
     public Optional<WorkflowRun> getWorkflowRun(String id) {
         return workflowRepository.findById(id);
+    }
+
+    public Optional<WorkflowRun> proposeImplementation(String workflowId) {
+        Optional<WorkflowRun> optRun = workflowRepository.findById(workflowId);
+        if (optRun.isEmpty()) {
+            return Optional.empty();
+        }
+        WorkflowRun run = optRun.get();
+        if (governedExecutionService != null) {
+            governedExecutionService.proposeImplementation(run);
+            run.setStatus(WorkflowStatus.PROPOSED);
+            run.setCurrentStage(WorkflowStage.IMPLEMENTATION_PROPOSAL);
+            workflowRepository.save(run);
+        }
+        return Optional.of(run);
+    }
+
+    public GovernedExecutionRecord executeImplementation(String workflowId, String planHash) {
+        if (governedExecutionService == null) {
+            throw new IllegalStateException("Governed execution service is not configured.");
+        }
+        return governedExecutionService.executeImplementation(workflowId, planHash);
     }
 }

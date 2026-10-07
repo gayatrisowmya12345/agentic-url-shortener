@@ -153,6 +153,65 @@ public class WorkflowController {
                 .orElseThrow(() -> new WorkflowNotFoundException("Workflow '" + id + "' was not found."));
     }
 
+    @PostMapping("/{id}/propose")
+    public ResponseEntity<WorkflowResponse> proposeImplementation(
+            @PathVariable String id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Auth-Token", required = false) String tokenHeader
+    ) {
+        validateWorkflowId(id);
+        authorizationService.authorizeOperator(authHeader, tokenHeader);
+        return orchestrator.proposeImplementation(id)
+                .map(run -> ResponseEntity.ok(WorkflowResponse.from(run)))
+                .orElseThrow(() -> new WorkflowNotFoundException("Workflow '" + id + "' was not found."));
+    }
+
+    @GetMapping("/{id}/proposal")
+    public ResponseEntity<com.linkforge.domain.workflow.implementation.ImplementationProposal> getProposal(
+            @PathVariable String id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Auth-Token", required = false) String tokenHeader
+    ) {
+        validateWorkflowId(id);
+        authorizationService.authorizeOperator(authHeader, tokenHeader);
+        WorkflowRun run = orchestrator.getWorkflowRun(id)
+                .orElseThrow(() -> new WorkflowNotFoundException("Workflow '" + id + "' was not found."));
+        if (run.getImplementationProposal() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(run.getImplementationProposal());
+    }
+
+    @PostMapping("/{id}/execute")
+    public ResponseEntity<com.linkforge.api.dto.GovernedExecutionResponse> executeImplementation(
+            @PathVariable String id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Auth-Token", required = false) String tokenHeader,
+            @Valid @RequestBody com.linkforge.api.dto.ExecuteWorkflowRequest request
+    ) {
+        validateWorkflowId(id);
+        authorizationService.authorizeOperator(authHeader, tokenHeader);
+        com.linkforge.domain.workflow.implementation.GovernedExecutionRecord record =
+                orchestrator.executeImplementation(id, request.planHash());
+        return ResponseEntity.ok(com.linkforge.api.dto.GovernedExecutionResponse.from(record));
+    }
+
+    @GetMapping("/{id}/execution")
+    public ResponseEntity<com.linkforge.api.dto.GovernedExecutionResponse> getExecution(
+            @PathVariable String id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Auth-Token", required = false) String tokenHeader
+    ) {
+        validateWorkflowId(id);
+        authorizationService.authorizeOperator(authHeader, tokenHeader);
+        WorkflowRun run = orchestrator.getWorkflowRun(id)
+                .orElseThrow(() -> new WorkflowNotFoundException("Workflow '" + id + "' was not found."));
+        if (run.getExecutionRecord() == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(com.linkforge.api.dto.GovernedExecutionResponse.from(run.getExecutionRecord()));
+    }
+
     private void validateWorkflowId(String id) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("Workflow ID cannot be null or blank.");

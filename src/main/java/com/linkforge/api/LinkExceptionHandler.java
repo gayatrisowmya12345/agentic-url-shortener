@@ -77,6 +77,18 @@ public class LinkExceptionHandler {
                 .body(ApiErrorResponse.of("INVALID_PLAN_HASH", sanitizeMessage(ex.getMessage())));
     }
 
+    @ExceptionHandler(com.linkforge.service.implementation.SafetyPolicyViolationException.class)
+    public ResponseEntity<ApiErrorResponse> handleSafetyViolation(com.linkforge.service.implementation.SafetyPolicyViolationException ex) {
+        return ResponseEntity.status(HttpStatus.UNPROCESSABLE_ENTITY)
+                .body(ApiErrorResponse.of("SAFETY_POLICY_VIOLATION", sanitizeMessage(ex.getMessage())));
+    }
+
+    @ExceptionHandler(com.linkforge.service.implementation.StaleInputHashException.class)
+    public ResponseEntity<ApiErrorResponse> handleStaleInputHash(com.linkforge.service.implementation.StaleInputHashException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiErrorResponse.of("STALE_INPUT_HASH", sanitizeMessage(ex.getMessage())));
+    }
+
     @ExceptionHandler(IllegalStateException.class)
     public ResponseEntity<ApiErrorResponse> handleIllegalState(IllegalStateException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
