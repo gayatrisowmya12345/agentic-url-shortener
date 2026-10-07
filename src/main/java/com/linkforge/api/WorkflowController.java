@@ -32,15 +32,27 @@ public class WorkflowController {
     private final WorkflowOrchestrator orchestrator;
     private final WorkflowAuthorizationService authorizationService;
     private final WorkflowEvidenceService evidenceService;
+    private final com.linkforge.service.release.ReleaseReadinessService releaseReadinessService;
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public WorkflowController(
+            WorkflowOrchestrator orchestrator,
+            WorkflowAuthorizationService authorizationService,
+            WorkflowEvidenceService evidenceService,
+            @org.springframework.beans.factory.annotation.Autowired(required = false) com.linkforge.service.release.ReleaseReadinessService releaseReadinessService
+    ) {
+        this.orchestrator = orchestrator;
+        this.authorizationService = authorizationService;
+        this.evidenceService = evidenceService;
+        this.releaseReadinessService = releaseReadinessService;
+    }
 
     public WorkflowController(
             WorkflowOrchestrator orchestrator,
             WorkflowAuthorizationService authorizationService,
             WorkflowEvidenceService evidenceService
     ) {
-        this.orchestrator = orchestrator;
-        this.authorizationService = authorizationService;
-        this.evidenceService = evidenceService;
+        this(orchestrator, authorizationService, evidenceService, null);
     }
 
     @PostMapping
@@ -129,6 +141,20 @@ public class WorkflowController {
         validateWorkflowId(id);
         authorizationService.authorizePlanApproval(authHeader, tokenHeader);
         String approver = authorizationService.resolveApprover(actorHeader, request.approver());
+
+        // Check if workflow has a computed release readiness outcome matching the submitted hash
+        if (releaseReadinessService != null) {
+            WorkflowRun existing = orchestrator.getWorkflowRun(id).orElse(null);
+            if (existing != null && existing.getReleaseReadiness() != null
+                    && request.planHash() != null
+                    && request.planHash().trim().equals(existing.getReleaseReadiness().outcomeHash())) {
+                WorkflowRun updated = releaseReadinessService.approveReleaseReadiness(
+                        id, request.planHash(), request.decision(), approver, request.comments()
+                );
+                return ResponseEntity.ok(WorkflowResponse.from(updated));
+            }
+        }
+
         return orchestrator.approvePlan(id, request.decision(), request.planHash(), approver, request.comments())
                 .map(run -> ResponseEntity.ok(WorkflowResponse.from(run)))
                 .orElseThrow(() -> new WorkflowNotFoundException("Workflow '" + id + "' was not found."));
@@ -210,6 +236,47 @@ public class WorkflowController {
             return ResponseEntity.notFound().build();
         }
         return ResponseEntity.ok(com.linkforge.api.dto.GovernedExecutionResponse.from(run.getExecutionRecord()));
+    }
+
+    @GetMapping({ "/{id}/release", "/{id}/release-readiness" })
+    public ResponseEntity<com.linkforge.domain.workflow.release.ReleaseReadinessOutcome> getReleaseReadiness(
+            @PathVariable String id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Auth-Token", required = false) String tokenHeader
+    ) {
+        validateWorkflowId(id);
+        authorizationService.authorizeOperator(authHeader, tokenHeader);
+        WorkflowRun run = orchestrator.getWorkflowRun(id)
+                .orElseThrow(() -> new WorkflowNotFoundException("Workflow '" + id + "' was not found."));
+        com.linkforge.domain.workflow.release.ReleaseReadinessOutcome outcome = run.getReleaseReadiness();
+        if (outcome == null && releaseReadinessService != null) {
+            outcome = releaseReadinessService.evaluateReleaseReadiness(run);
+        }
+        if (outcome == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(outcome);
+    }
+
+    @PostMapping({ "/{id}/release/approve", "/{id}/release-readiness/approve" })
+    public ResponseEntity<WorkflowResponse> approveReleaseReadiness(
+            @PathVariable String id,
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-Auth-Token", required = false) String tokenHeader,
+            @RequestHeader(value = "X-Actor-Id", required = false) String actorHeader,
+            @Valid @RequestBody com.linkforge.api.dto.ReleaseApprovalRequest request
+    ) {
+        validateWorkflowId(id);
+        authorizationService.authorizePlanApproval(authHeader, tokenHeader);
+        String approver = authorizationService.resolveApprover(actorHeader, request.approver());
+        String hash = request.effectiveHash();
+        if (hash == null || hash.isBlank()) {
+            throw new IllegalArgumentException("Release outcome hash cannot be null or blank.");
+        }
+        WorkflowRun updated = releaseReadinessService.approveReleaseReadiness(
+                id, hash, request.decision(), approver, request.comments()
+        );
+        return ResponseEntity.ok(WorkflowResponse.from(updated));
     }
 
     private void validateWorkflowId(String id) {

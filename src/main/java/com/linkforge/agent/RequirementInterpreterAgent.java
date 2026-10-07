@@ -390,6 +390,27 @@ public class RequirementInterpreterAgent {
                 "AC-5: Given a successful redirection event, the system atomically increments the usage count and timestamps the access record."
         ));
 
+        String lowerReq = rawRequirement != null ? rawRequirement.toLowerCase(Locale.ROOT) : "";
+
+        // Extract and retain explicit constraints and numeric bounds from requirement
+        if (lowerReq.contains("alias")) {
+            int minLen = extractMinAliasLength(rawRequirement, 3);
+            int maxLen = extractMaxAliasLength(rawRequirement, 30);
+            acceptanceCriteria.add("AC-ALIAS: Given a custom alias with alphanumeric characters and minimum length " + minLen +
+                    ", when creating a short link, the system rejects aliases shorter than " + minLen +
+                    " characters (including " + (minLen - 1) + "-character aliases) and accepts valid boundary values (" +
+                    minLen + " to " + maxLen + " characters).");
+        }
+        if (lowerReq.contains("domain") || lowerReq.contains("https-only") || lowerReq.contains("allowed hosts")) {
+            acceptanceCriteria.add("AC-DOMAIN: Given a destination URL, the system validates the domain against security policies, rejecting blocked hosts (e.g. malware.test) with HTTP 400.");
+        }
+        if (lowerReq.contains("token") || lowerReq.contains("base62")) {
+            acceptanceCriteria.add("AC-TOKEN: Given a short link generation request, the system generates Base62 tokens adhering to length bounds and uniqueness constraints.");
+        }
+        if (lowerReq.contains("analytics") || lowerReq.contains("click count") || lowerReq.contains("filter")) {
+            acceptanceCriteria.add("AC-ANALYTICS: Given a link redirection event, the system tracks click analytics while filtering out synthetic bot user agents.");
+        }
+
         List<String> assumptions = new java.util.ArrayList<>(List.of(
                 "Short tokens are 6 to 8 alphanumeric characters.",
                 "Redirection targets are standard HTTP or HTTPS protocols.",
@@ -409,5 +430,63 @@ public class RequirementInterpreterAgent {
                 assumptions,
                 metadata
         );
+    }
+
+    public static int extractMinAliasLength(String text, int defaultMin) {
+        if (text == null || text.isBlank()) return defaultMin;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:minimum|min)(?:\\s+length)?\\s+(?:of\\s+)?(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("between\\s+(\\d+)\\s+and\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("from\\s+(\\d+)\\s+to\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("(\\d+)\\s*-\\s*(\\d+)\\s*(?:characters|chars)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("at least (\\d+)\\s*(?:characters|chars)?", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("shorter than\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        return defaultMin;
+    }
+
+    public static int extractMaxAliasLength(String text, int defaultMax) {
+        if (text == null || text.isBlank()) return defaultMax;
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("(?:maximum|max)(?:\\s+length)?\\s+(?:of\\s+)?(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("between\\s+(\\d+)\\s+and\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(2)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("from\\s+(\\d+)\\s+to\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(2)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("(\\d+)\\s*-\\s*(\\d+)\\s*(?:characters|chars)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(2)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("(?:up to|at most)\\s+(\\d+)\\s*(?:characters|chars)?", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        m = java.util.regex.Pattern.compile("longer than\\s+(\\d+)", java.util.regex.Pattern.CASE_INSENSITIVE).matcher(text);
+        if (m.find()) {
+            try { return Integer.parseInt(m.group(1)); } catch (NumberFormatException ignored) {}
+        }
+        return defaultMax;
     }
 }

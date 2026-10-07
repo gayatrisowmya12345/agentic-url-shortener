@@ -19,7 +19,11 @@ import com.linkforge.domain.workflow.WorkflowRun;
 import com.linkforge.domain.workflow.WorkflowStage;
 import com.linkforge.domain.workflow.WorkflowStatus;
 import com.linkforge.domain.workflow.implementation.BuildValidationResult;
+import com.linkforge.domain.workflow.implementation.FileChangeOperation;
+import com.linkforge.domain.workflow.implementation.FileChangeProposal;
 import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
+import com.linkforge.domain.workflow.implementation.ImplementationProposal;
+import com.linkforge.domain.workflow.implementation.TestReportItem;
 import com.linkforge.domain.workflow.scenario.Scenario;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
 import com.linkforge.service.evidence.WorkflowEvidenceService;
@@ -313,7 +317,7 @@ class WorkflowEvidenceAndObservabilityServiceTest {
     }
 
     @Test
-    @DisplayName("Evidence view reports targeted test execution as verified when governed test command succeeds")
+    @DisplayName("Evidence view reports targeted test execution as verified when governed test command succeeds with proven test records")
     void evidenceViewReportsTargetedTestExecutionVerifiedWhenBuildSucceeds() {
         WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
         BuildValidationResult buildResult = new BuildValidationResult(
@@ -322,15 +326,30 @@ class WorkflowEvidenceAndObservabilityServiceTest {
                 3200,
                 "[INFO] BUILD SUCCESS",
                 "SUCCESS",
-                Instant.now()
+                Instant.now(),
+                false,
+                List.of(new com.linkforge.domain.workflow.implementation.TestReportItem(
+                        "com.linkforge.api.CustomAliasValidationTest",
+                        "validatesCustomAlias",
+                        "PASSED",
+                        150,
+                        null,
+                        List.of("AC-ALIAS-1")
+                ))
         );
+        ImplementationProposal proposal = ImplementationProposal.supported(
+                "ALIAS_VALIDATION",
+                List.of(FileChangeProposal.of("src/test/java/com/linkforge/api/CustomAliasValidationTest.java",
+                        FileChangeOperation.CREATE, "// test", null, "TASK-1", "AC-ALIAS-1", "TESTING", "Test"))
+        );
+        run.setImplementationProposal(proposal);
         GovernedExecutionRecord record = new GovernedExecutionRecord(
                 "exec-123",
                 run.getId(),
                 "COMPLETED",
                 "FINISHED",
-                "hash-123",
-                null,
+                proposal.proposalHash(),
+                proposal,
                 List.of(),
                 buildResult,
                 null,
@@ -347,6 +366,198 @@ class WorkflowEvidenceAndObservabilityServiceTest {
         assertThat(status.buildExecution()).isEqualTo("VERIFIED (MAVEN_WRAPPER_BUILD)");
         assertThat(status.automatedTestExecution()).isEqualTo("VERIFIED (TARGETED_TEST_EXECUTION)");
         assertThat(status.deploymentAndRelease()).isEqualTo("NOT_SUPPORTED");
+    }
+
+    @Test
+    @DisplayName("Evidence view reports full verification when clean verify discovers passing tests covering all proposal criteria")
+    void evidenceViewReportsFullVerificationWhenAllCriteriaCovered() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        ImplementationProposal proposal = ImplementationProposal.supported(
+                "URL_SHORTENER_CORE",
+                List.of(
+                        FileChangeProposal.of("src/main/java/LinkShortener.java", FileChangeOperation.CREATE, "// code", null, "TASK-1", "AC-1", "API", "Service"),
+                        FileChangeProposal.of("src/main/java/AliasValidator.java", FileChangeOperation.CREATE, "// code", null, "TASK-2", "AC-2", "API", "Validator")
+                )
+        );
+        run.setImplementationProposal(proposal);
+
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode clean verify",
+                0,
+                5400,
+                "[INFO] BUILD SUCCESS",
+                "SUCCESS",
+                Instant.now(),
+                true,
+                List.of(
+                        new TestReportItem("com.linkforge.LinkShortenerTest", "createsShortLink", "PASSED", 200, null, List.of("AC-1")),
+                        new TestReportItem("com.linkforge.AliasValidatorTest", "validatesAlias", "PASSED", 150, null, List.of("AC-2"))
+                )
+        );
+
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-full", run.getId(), "COMPLETED", "FINISHED", proposal.proposalHash(), proposal, List.of(),
+                buildResult, null, null, Instant.now(), Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        assertThat(status.automatedTestExecution()).isEqualTo("VERIFIED (FULL_VERIFICATION)");
+        assertThat(evidence.criteriaEvidence().stream()
+                .filter(c -> "AC-1".equals(c.criterionId()) || "AC-2".equals(c.criterionId()))
+                .allMatch(c -> "PASSED".equals(c.validationStatus()))).isTrue();
+    }
+
+    @Test
+    @DisplayName("Evidence view reports missing criterion coverage when proposal criteria are only partially covered by passing tests")
+    void evidenceViewReportsMissingCoverageWhenCriteriaPartiallyCovered() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        ImplementationProposal proposal = ImplementationProposal.supported(
+                "URL_SHORTENER_CORE",
+                List.of(
+                        FileChangeProposal.of("src/main/java/LinkShortener.java", FileChangeOperation.CREATE, "// code", null, "TASK-1", "AC-1", "API", "Service"),
+                        FileChangeProposal.of("src/main/java/AliasValidator.java", FileChangeOperation.CREATE, "// code", null, "TASK-2", "AC-2", "API", "Validator")
+                )
+        );
+        run.setImplementationProposal(proposal);
+
+        // Only AC-1 has a passing test; AC-2 has no test
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode clean verify",
+                0,
+                4200,
+                "[INFO] BUILD SUCCESS",
+                "SUCCESS",
+                Instant.now(),
+                true,
+                List.of(
+                        new TestReportItem("com.linkforge.LinkShortenerTest", "createsShortLink", "PASSED", 200, null, List.of("AC-1"))
+                )
+        );
+
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-partial", run.getId(), "COMPLETED", "FINISHED", proposal.proposalHash(), proposal, List.of(),
+                buildResult, null, null, Instant.now(), Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        assertThat(status.automatedTestExecution()).isEqualTo("UNVERIFIED (MISSING_CRITERION_COVERAGE)");
+    }
+
+    @Test
+    @DisplayName("Evidence view reports tests failed when surefire reports contain test failure or error")
+    void evidenceViewReportsTestsFailedWhenTestReportsContainFailure() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        ImplementationProposal proposal = ImplementationProposal.supported(
+                "ALIAS_VALIDATION",
+                List.of(
+                        FileChangeProposal.of("src/main/java/AliasValidator.java", FileChangeOperation.CREATE, "// code", null, "TASK-1", "AC-1", "API", "Validator")
+                )
+        );
+        run.setImplementationProposal(proposal);
+
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode clean verify",
+                1,
+                3100,
+                "[INFO] BUILD FAILURE - Tests run: 1, Failures: 1",
+                "BUILD_FAILED",
+                Instant.now(),
+                true,
+                List.of(
+                        new TestReportItem("com.linkforge.AliasValidatorTest", "validatesAlias", "FAILED", 120, "Assertion failed: expected 4 but was 3", List.of("AC-1"))
+                )
+        );
+
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-fail", run.getId(), "COMPLETED", "FINISHED", proposal.proposalHash(), proposal, List.of(),
+                buildResult, null, null, Instant.now(), Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        assertThat(status.automatedTestExecution()).isEqualTo("UNVERIFIED (TESTS_FAILED)");
+    }
+
+    @Test
+    @DisplayName("Evidence view reports zero relevant tests when tests exist but none cover proposal criteria")
+    void evidenceViewReportsZeroRelevantTestsWhenTestsDoNotCoverCriteria() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        ImplementationProposal proposal = ImplementationProposal.supported(
+                "ALIAS_VALIDATION",
+                List.of(
+                        FileChangeProposal.of("src/main/java/AliasValidator.java", FileChangeOperation.CREATE, "// code", null, "TASK-1", "AC-ALIAS-1", "API", "Validator")
+                )
+        );
+        run.setImplementationProposal(proposal);
+
+        // Test runs and passes, but is for an unrelated criterion (AC-UNRELATED)
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode clean verify",
+                0,
+                2900,
+                "[INFO] BUILD SUCCESS",
+                "SUCCESS",
+                Instant.now(),
+                true,
+                List.of(
+                        new TestReportItem("com.linkforge.UnrelatedTest", "testSomethingElse", "PASSED", 100, null, List.of("AC-UNRELATED"))
+                )
+        );
+
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-unrelated", run.getId(), "COMPLETED", "FINISHED", proposal.proposalHash(), proposal, List.of(),
+                buildResult, null, null, Instant.now(), Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        assertThat(status.automatedTestExecution()).isEqualTo("UNVERIFIED (ZERO_RELEVANT_TESTS)");
+    }
+
+    @Test
+    @DisplayName("Evidence view reports automated test execution as unverified when build has zero relevant tests")
+    void evidenceViewReportsUnverifiedWhenZeroRelevantTests() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode test",
+                0,
+                1500,
+                "[INFO] BUILD SUCCESS",
+                "SUCCESS",
+                Instant.now(),
+                false,
+                List.of()
+        );
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-zero",
+                run.getId(),
+                "COMPLETED",
+                "FINISHED",
+                "hash-zero",
+                null,
+                List.of(),
+                buildResult,
+                null,
+                null,
+                Instant.now(),
+                Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        assertThat(status.automatedTestExecution()).isEqualTo("UNVERIFIED (ZERO_RELEVANT_TESTS)");
     }
 
     @Test
@@ -402,5 +613,215 @@ class WorkflowEvidenceAndObservabilityServiceTest {
         assertThat(failed.sourceCodeGeneration()).isEqualTo("FAILED");
         assertThat(failed.buildExecution()).isEqualTo("FAILED");
         assertThat(failed.automatedTestExecution()).isEqualTo("FAILED");
+    }
+
+    @Test
+    @DisplayName("Criterion matching requires exact ID after normalization: AC-10 cannot satisfy AC-1")
+    void criterionMatchingRequiresExactIdAndAc10CannotSatisfyAc1() {
+        TestReportItem ac10Test = new TestReportItem(
+                "com.linkforge.api.FeatureTenTest", "testFeatureTen", "PASSED", 100, null, List.of("AC-10")
+        );
+        TestReportItem ac1Test = new TestReportItem(
+                "com.linkforge.api.FeatureOneTest", "testFeatureOne", "PASSED", 100, null, List.of("AC-1")
+        );
+        TestReportItem multiTest = new TestReportItem(
+                "com.linkforge.api.MultiTest", "testMulti", "PASSED", 100, null, List.of("AC-10; AC-2")
+        );
+
+        // AC-10 test must NEVER satisfy AC-1
+        assertThat(WorkflowEvidenceService.testCoversCriterion(ac10Test, "AC-1"))
+                .as("AC-10 must not satisfy AC-1 via substring matching")
+                .isFalse();
+
+        // Exact matches with case/whitespace normalization must satisfy
+        assertThat(WorkflowEvidenceService.testCoversCriterion(ac1Test, "AC-1")).isTrue();
+        assertThat(WorkflowEvidenceService.testCoversCriterion(ac1Test, "ac-1")).isTrue();
+        assertThat(WorkflowEvidenceService.testCoversCriterion(ac1Test, "  AC-1  ")).isTrue();
+
+        // Substring contained in multiple delimited tokens
+        assertThat(WorkflowEvidenceService.testCoversCriterion(multiTest, "AC-1"))
+                .as("Token AC-10 in delimited list must not satisfy AC-1")
+                .isFalse();
+        assertThat(WorkflowEvidenceService.testCoversCriterion(multiTest, "AC-2")).isTrue();
+        assertThat(WorkflowEvidenceService.testCoversCriterion(multiTest, "AC-10")).isTrue();
+    }
+
+    @Test
+    @DisplayName("Evidence view leaves missing criterion coverage unverified when AC-10 cannot satisfy AC-1")
+    void evidenceViewLeavesMissingCoverageUnverifiedWhenAc10CannotSatisfyAc1() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        ImplementationProposal proposal = ImplementationProposal.supported(
+                "URL_SHORTENER_CORE",
+                List.of(
+                        FileChangeProposal.of("src/main/java/LinkShortener.java", FileChangeOperation.CREATE, "// code", null, "TASK-1", "AC-1", "API", "Service"),
+                        FileChangeProposal.of("src/main/java/AliasValidator.java", FileChangeOperation.CREATE, "// code", null, "TASK-2", "AC-2", "API", "Validator")
+                )
+        );
+        run.setImplementationProposal(proposal);
+
+        // Passing test exists for AC-10 (not AC-1) and AC-2
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode clean verify",
+                0,
+                4200,
+                "[INFO] BUILD SUCCESS",
+                "SUCCESS",
+                Instant.now(),
+                true,
+                List.of(
+                        new TestReportItem("com.linkforge.FeatureTenTest", "testTen", "PASSED", 200, null, List.of("AC-10")),
+                        new TestReportItem("com.linkforge.AliasValidatorTest", "validatesAlias", "PASSED", 150, null, List.of("AC-2"))
+                )
+        );
+
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-ac10-partial", run.getId(), "COMPLETED", "FINISHED", proposal.proposalHash(), proposal, List.of(),
+                buildResult, null, null, Instant.now(), Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        // Must report MISSING_CRITERION_COVERAGE because AC-1 is unsatisfied by AC-10
+        assertThat(status.automatedTestExecution()).isEqualTo("UNVERIFIED (MISSING_CRITERION_COVERAGE)");
+
+        // Individual criterion validation statuses: AC-1 remains UNVERIFIED, AC-2 is PASSED
+        assertThat(evidence.criteriaEvidence().stream()
+                .filter(c -> "AC-1".equals(c.criterionId()))
+                .findFirst()
+                .orElseThrow()
+                .validationStatus()).isEqualTo("UNVERIFIED");
+
+        assertThat(evidence.criteriaEvidence().stream()
+                .filter(c -> "AC-2".equals(c.criterionId()))
+                .findFirst()
+                .orElseThrow()
+                .validationStatus()).isEqualTo("PASSED");
+    }
+
+    @Test
+    @DisplayName("Evidence view reports zero relevant tests when only AC-10 tests execute for AC-1 proposal")
+    void evidenceViewReportsZeroRelevantTestsWhenOnlyAc10TestsExecuteForAc1Proposal() {
+        WorkflowRun run = orchestrator.startWorkflow("Create a standard URL shortening service");
+        ImplementationProposal proposal = ImplementationProposal.supported(
+                "URL_SHORTENER_CORE",
+                List.of(
+                        FileChangeProposal.of("src/main/java/LinkShortener.java", FileChangeOperation.CREATE, "// code", null, "TASK-1", "AC-1", "API", "Service")
+                )
+        );
+        run.setImplementationProposal(proposal);
+
+        // Only AC-10 test ran
+        BuildValidationResult buildResult = new BuildValidationResult(
+                "./mvnw --batch-mode clean verify",
+                0,
+                3000,
+                "[INFO] BUILD SUCCESS",
+                "SUCCESS",
+                Instant.now(),
+                true,
+                List.of(
+                        new TestReportItem("com.linkforge.FeatureTenTest", "testTen", "PASSED", 200, null, List.of("AC-10"))
+                )
+        );
+
+        GovernedExecutionRecord record = new GovernedExecutionRecord(
+                "exec-ac10-zero", run.getId(), "COMPLETED", "FINISHED", proposal.proposalHash(), proposal, List.of(),
+                buildResult, null, null, Instant.now(), Instant.now()
+        );
+        run.setExecutionRecord(record);
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+        ExecutionVerificationStatus status = evidence.verificationStatus();
+
+        // Must report ZERO_RELEVANT_TESTS because AC-10 does not cover AC-1
+        assertThat(status.automatedTestExecution()).isEqualTo("UNVERIFIED (ZERO_RELEVANT_TESTS)");
+        assertThat(evidence.criteriaEvidence().stream()
+                .filter(c -> "AC-1".equals(c.criterionId()))
+                .findFirst()
+                .orElseThrow()
+                .validationStatus()).isEqualTo("UNVERIFIED");
+    }
+
+    @Test
+    @DisplayName("Regression: AC-10 tasks and events do not appear as AC-1 evidence, while exact AC-1 matches still work")
+    void ac10TasksAndEventsDoNotAppearAsAc1EvidenceWhileExactAc1MatchesWork() {
+        WorkflowRun run = new WorkflowRun("Add custom alias and token expiry features");
+        run.setAcceptanceCriteria(List.of(
+                "AC-1: Enforce custom alias constraints",
+                "AC-10: Enforce token expiration policies"
+        ));
+
+        // Add tasks mentioning AC-10 and AC-1
+        PlannedTask task1 = new PlannedTask("TASK-1", "Implement AC-1 alias constraint", "Validates alias bounds for AC-1", List.of(), "COMPLETED");
+        PlannedTask task10 = new PlannedTask("TASK-10", "Implement AC-10 token expiry", "Handles token expiration for AC-10", List.of(), "COMPLETED");
+        run.setTasks(List.of(task1, task10));
+
+        // Add events mentioning AC-10 and AC-1
+        WorkflowEvent event1 = WorkflowEvent.of("TASK_AC-1_COMPLETED", "STAGE_1", "Completed task TASK-1 for AC-1 successfully.");
+        WorkflowEvent event10 = WorkflowEvent.of("TASK_AC-10_COMPLETED", "STAGE_10", "Completed task TASK-10 for AC-10 successfully.");
+        run.addEvent(event1);
+        run.addEvent(event10);
+
+        // Also add specialist invocations
+        SpecialistInvocation inv1 = new SpecialistInvocation("inv-1", "TASK-1", "agent-1", "SECURITY_VALIDATION", "SUCCESS", "input", "output", List.of("rec"), List.of("test"), List.of("AC-1"), "ollama", "m", false, null, Instant.now(), Instant.now());
+        SpecialistInvocation inv10 = new SpecialistInvocation("inv-10", "TASK-10", "agent-10", "DATA_PERSISTENCE", "SUCCESS", "input", "output", List.of("rec"), List.of("test"), List.of("AC-10"), "ollama", "m", false, null, Instant.now(), Instant.now());
+        run.setSpecialistInvocations(List.of(inv1, inv10));
+
+        WorkflowEvidenceResponse evidence = evidenceService.buildEvidenceResponse(run);
+
+        // Verify AC-1 evidence
+        CriterionEvidenceItem ac1Item = evidence.criteriaEvidence().stream()
+                .filter(c -> "AC-1".equals(c.criterionId()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(ac1Item.plannedTaskIds())
+                .as("AC-1 must include TASK-1")
+                .contains("TASK-1")
+                .as("AC-1 must NOT include TASK-10 via substring matching")
+                .doesNotContain("TASK-10");
+
+        assertThat(ac1Item.relevantEventTypes())
+                .as("AC-1 must include TASK_AC-1_COMPLETED")
+                .contains("TASK_AC-1_COMPLETED")
+                .as("AC-1 must NOT include TASK_AC-10_COMPLETED via substring matching")
+                .doesNotContain("TASK_AC-10_COMPLETED");
+
+        // Verify AC-10 evidence
+        CriterionEvidenceItem ac10Item = evidence.criteriaEvidence().stream()
+                .filter(c -> "AC-10".equals(c.criterionId()))
+                .findFirst()
+                .orElseThrow();
+
+        assertThat(ac10Item.plannedTaskIds())
+                .as("AC-10 must include TASK-10")
+                .contains("TASK-10")
+                .as("AC-10 must NOT include TASK-1")
+                .doesNotContain("TASK-1");
+
+        assertThat(ac10Item.relevantEventTypes())
+                .as("AC-10 must include TASK_AC-10_COMPLETED")
+                .contains("TASK_AC-10_COMPLETED")
+                .as("AC-10 must NOT include TASK_AC-1_COMPLETED")
+                .doesNotContain("TASK_AC-1_COMPLETED");
+    }
+
+    @Test
+    @DisplayName("Regression: textContainsCriterionToken requires exact normalized token match")
+    void textContainsCriterionTokenRequiresExactNormalizedTokenMatch() {
+        // AC-10 in text must NOT match AC-1
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("Completed task for AC-10", "AC-1")).isFalse();
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("EVENT_AC-10_VERIFIED", "AC-1")).isFalse();
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("AC-10: Token policy", "AC-1")).isFalse();
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("AC-10", "AC-1")).isFalse();
+
+        // Exact AC-1 matches with surrounding punctuation/casing must match
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("Completed task for AC-1.", "AC-1")).isTrue();
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("Completed task for (ac-1)", "AC-1")).isTrue();
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("EVENT_AC-1_VERIFIED", "AC-1")).isTrue();
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("AC-1: Shorten URL", "ac-1")).isTrue();
+        assertThat(WorkflowEvidenceService.textContainsCriterionToken("AC-1", "AC-1")).isTrue();
     }
 }

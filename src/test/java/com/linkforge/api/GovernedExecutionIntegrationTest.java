@@ -108,9 +108,10 @@ class GovernedExecutionIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.stage").value("FINISHED"))
-                .andExpect(jsonPath("$.appliedChanges", hasSize(2)))
+                .andExpect(jsonPath("$.appliedChanges", hasSize(3)))
                 .andExpect(jsonPath("$.appliedChanges[0].path").value("src/main/java/com/linkforge/service/link/AliasValidator.java"))
                 .andExpect(jsonPath("$.appliedChanges[1].path").value("src/test/java/com/linkforge/service/link/CustomAliasValidationTest.java"))
+                .andExpect(jsonPath("$.appliedChanges[2].path").value("src/test/java/com/linkforge/api/CustomAliasHttpValidationTest.java"))
                 .andExpect(jsonPath("$.buildValidation.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.buildValidation.exitCode").value(0))
                 .andExpect(jsonPath("$.buildValidation.durationMs", greaterThan(0)));
@@ -127,7 +128,7 @@ class GovernedExecutionIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.verificationStatus.sourceCodeGeneration").value("VERIFIED (ISOLATED_PROPOSAL)"))
                 .andExpect(jsonPath("$.verificationStatus.buildExecution").value("VERIFIED (MAVEN_WRAPPER_BUILD)"))
-                .andExpect(jsonPath("$.verificationStatus.automatedTestExecution").value("VERIFIED (TARGETED_TEST_EXECUTION)"))
+                .andExpect(jsonPath("$.verificationStatus.automatedTestExecution").value("VERIFIED (FULL_VERIFICATION)"))
                 .andExpect(jsonPath("$.verificationStatus.deploymentAndRelease").value("NOT_SUPPORTED"));
 
         // Step 8: Verify auditable history events

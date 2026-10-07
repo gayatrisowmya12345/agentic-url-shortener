@@ -38,19 +38,36 @@ public class GovernedBuildValidator {
     );
 
     private final GovernedExecutionProperties properties;
+    private final SurefireReportParser surefireReportParser;
 
     @Autowired
-    public GovernedBuildValidator(GovernedExecutionProperties properties) {
+    public GovernedBuildValidator(
+            GovernedExecutionProperties properties,
+            @Autowired(required = false) SurefireReportParser surefireReportParser
+    ) {
         this.properties = properties != null ? properties : new GovernedExecutionProperties();
+        this.surefireReportParser = surefireReportParser != null ? surefireReportParser : new SurefireReportParser();
+    }
+
+    public GovernedBuildValidator(GovernedExecutionProperties properties) {
+        this(properties, new SurefireReportParser());
     }
 
     public BuildValidationResult validateBuild(Path workspaceRoot) {
+        return validateBuild(workspaceRoot, null);
+    }
+
+    public BuildValidationResult validateBuild(
+            Path workspaceRoot,
+            com.linkforge.domain.workflow.implementation.ImplementationProposal proposal
+    ) {
         if (workspaceRoot == null || !Files.isDirectory(workspaceRoot)) {
             throw new IllegalArgumentException("Workspace root must be an existing directory.");
         }
 
         Instant startedAt = Instant.now();
         String command = properties.getFixedBuildCommand();
+        boolean fullVerification = command.contains("verify") || (!command.contains("-Dtest=") && command.contains("test"));
 
         try {
             ensureMavenWrapperPresent(workspaceRoot);
@@ -97,7 +114,9 @@ public class GovernedBuildValidator {
                         durationMs,
                         drainer.getCapturedOutput() + "\nBuild execution timed out after " + properties.getBuildTimeoutSeconds() + " seconds.",
                         "TIMED_OUT",
-                        Instant.now()
+                        Instant.now(),
+                        fullVerification,
+                        List.of()
                 );
             }
 
@@ -107,16 +126,21 @@ public class GovernedBuildValidator {
             } catch (InterruptedException ignored) {}
 
             int exitCode = process.exitValue();
-            String status = exitCode == 0 ? "SUCCESS" : "BUILD_FAILED";
+            List<com.linkforge.domain.workflow.implementation.TestReportItem> testReports = surefireReportParser.parseReports(workspaceRoot, proposal);
+            boolean hasFailedTests = testReports.stream().anyMatch(com.linkforge.domain.workflow.implementation.TestReportItem::isFailed);
+            String status = (exitCode == 0 && !hasFailedTests) ? "SUCCESS" : "BUILD_FAILED";
 
-            log.info("Governed build validation completed with exit code {} in {}ms (status: {})", exitCode, durationMs, status);
+            log.info("Governed build validation completed with exit code {} in {}ms (status: {}, tests discovered: {})",
+                    exitCode, durationMs, status, testReports.size());
             return new BuildValidationResult(
                     command,
                     exitCode,
                     durationMs,
                     drainer.getCapturedOutput(),
                     status,
-                    Instant.now()
+                    Instant.now(),
+                    fullVerification,
+                    testReports
             );
 
         } catch (Exception ex) {
@@ -128,7 +152,9 @@ public class GovernedBuildValidator {
                     durationMs,
                     "Execution error: " + ex.getMessage(),
                     "ERROR",
-                    Instant.now()
+                    Instant.now(),
+                    fullVerification,
+                    List.of()
             );
         }
     }

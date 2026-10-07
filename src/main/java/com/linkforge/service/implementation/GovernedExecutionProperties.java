@@ -19,7 +19,11 @@ public class GovernedExecutionProperties {
     private long maxTotalChangeBytes = 2_000_000L;  // 2 MB total per proposal
     private int buildTimeoutSeconds = 60;           // 60 seconds bounded execution
     private int maxCapturedOutputChars = 10_000;
-    private String fixedBuildCommand = "./mvnw --batch-mode test -Dtest=CustomAliasValidationTest";
+    private String fixedBuildCommand = "./mvnw --batch-mode clean verify";
+    private int maxRepairAttempts = 2;
+    private boolean containerIsolationAvailable = false;
+    private String containerImage = "maven:3.9.9-eclipse-temurin-21@sha256:4f3c7c7423e2dc92b34208a0d24c08e56d7eb596238b6d0e82eb0aaec6655519";
+    private String dependencyCachePath = null;
 
     public boolean isEnabled() {
         return enabled;
@@ -83,5 +87,54 @@ public class GovernedExecutionProperties {
 
     public void setFixedBuildCommand(String fixedBuildCommand) {
         this.fixedBuildCommand = fixedBuildCommand;
+    }
+
+    public int getMaxRepairAttempts() {
+        return maxRepairAttempts;
+    }
+
+    public void setMaxRepairAttempts(int maxRepairAttempts) {
+        this.maxRepairAttempts = maxRepairAttempts;
+    }
+
+    public boolean isContainerIsolationAvailable() {
+        // Must never treat flag alone as proof: requires both explicit configuration and functional runtime
+        return this.containerIsolationAvailable && probeContainerRuntime();
+    }
+
+    public void setContainerIsolationAvailable(boolean containerIsolationAvailable) {
+        this.containerIsolationAvailable = containerIsolationAvailable;
+    }
+
+    public String getContainerImage() {
+        return containerImage;
+    }
+
+    public void setContainerImage(String containerImage) {
+        this.containerImage = containerImage;
+    }
+
+    public String getDependencyCachePath() {
+        return dependencyCachePath;
+    }
+
+    public void setDependencyCachePath(String dependencyCachePath) {
+        this.dependencyCachePath = dependencyCachePath;
+    }
+
+    public static boolean probeContainerRuntime() {
+        try {
+            Process process = new ProcessBuilder("docker", "info")
+                    .redirectErrorStream(true)
+                    .start();
+            boolean finished = process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS);
+            if (!finished) {
+                process.destroyForcibly();
+                return false;
+            }
+            return process.exitValue() == 0;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 }

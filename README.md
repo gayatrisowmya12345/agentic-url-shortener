@@ -113,49 +113,66 @@ LinkForge provides resilient stage execution and graceful workflow termination:
    - Every state transition, operator gate action, retry attempt, and agent decision is persisted to relational H2 tables (`workflow_runs`, `workflow_events`, `workflow_agent_decisions`) with monotonic timestamps, stages, and structured details.
    - Database-backed persistence ensures workflow runs and complete audit logs survive application restarts.
    - Full acceptance-criteria traceability: links each criterion (e.g. `AC-1`) to planned tasks, specialist roles, agent decisions, and audit events, while reporting uncovered criteria as `UNCOVERED`.
-   - Honest capability accounting: explicitly distinguishes verified requirements and specialist analysis from runtime capabilities. For unexecuted or plan-only workflows, source generation and build execution are reported as `NOT_SUPPORTED`, and automated test execution is reported as `UNVERIFIED`. Following successful Milestone 10 governed execution, they are upgraded to `VERIFIED (ISOLATED_PROPOSAL)`, `VERIFIED (MAVEN_WRAPPER_BUILD)`, and `VERIFIED (TARGETED_TEST_EXECUTION)`. Non-success outcomes (e.g. `BLOCKED`, `TIMED_OUT`, `FAILED`, `ROLLED_BACK`) remain clearly distinct, and production deployment remains `NOT_SUPPORTED`.
+   - Honest capability accounting: explicitly distinguishes verified requirements and specialist analysis from runtime capabilities. For unexecuted or plan-only workflows, source generation and build execution are reported as `NOT_SUPPORTED`, and automated test execution is reported as `UNVERIFIED`. Following successful Milestone 10 governed execution, they are upgraded to `VERIFIED (ISOLATED_PROPOSAL)`, `VERIFIED (MAVEN_WRAPPER_BUILD)`, and `VERIFIED (FULL_VERIFICATION)` (or `UNVERIFIED (ZERO_RELEVANT_TESTS)` if zero relevant tests are executed). Non-success outcomes (e.g. `BLOCKED`, `TIMED_OUT`, `FAILED`, `ROLLED_BACK`) remain clearly distinct, and production deployment remains `NOT_SUPPORTED`.
    - Read-only operator observability APIs (`/history`, `/evidence`, `/summary`) protected by token authorization (`X-Operator-Token`, `X-Auth-Token`, or `Authorization: Bearer <token>`).
    - Secret-redaction safeguards: tokens, credentials, full LLM prompts, and raw secret payloads are strictly excluded from audit events and API responses.
 
 4. **Repeatable Scenario Runs & End-to-End Workbench Validation**:
    - Repeatable automated scenarios exercise the entire multi-agent pipeline through public HTTP endpoints with isolated, disposable fixtures.
-   - **Scenario 1 (Greenfield URL Shortener)**: Requirement interpretation, greenfield classification, dependency-aware DAG task synthesis, human plan approval, concurrent specialist coordination, and audit trail generation.
+   - **Scenario 1 (Greenfield URL Shortener)**: Requirement interpretation, greenfield classification, dependency-aware DAG task synthesis, human plan approval leading to specialist coordination and implementation-proposal approval pause, followed by approved execution, verification, and audit trail generation.
    - **Scenario 2 (Ambiguous Requirement & Clarification Gate)**: Ambiguity detection, targeted clarification questions, operator clarification submission, revision tracking (revision 2), and pipeline continuation.
    - **Scenario 3 (Brownfield Repository Inspection)**: Safe read-only inspection of disposable repository fixture within approved root, language/framework fingerprinting, and backward-compatible task planning without exposing local host paths.
    - **Scenario 4 (Human Approval Governance Gate)**: Human-in-the-loop plan review, SHA-256 plan hash tamper protection, rejection handling with terminal lock, and token-based authorization.
    - **Scenario 5 (Transient Failure Recovery & Safe Stop)**: Demonstrates automatic bounded retry recovery from a transient stage failure (5a, asserting retry attempts, failure classification, and success events) as well as operator safe stop (5b, immediate cancellation, blocking subsequent actions, and idempotent responses).
    - **Scenario 6 (Optional Live Ollama Execution)**: Seamless support for live model-backed analysis when local Ollama is available, with automatic graceful skip when offline.
 
-5. **Governed Implementation & Real Build Validation (Milestone 10)**:
-   - Extends the workbench with an end-to-end governed implementation pipeline that safely translates requirements into verifiable code modifications.
-   - **Narrowly Supported URL-Shortener Scopes**:
-     - `ALIAS_VALIDATION`: Custom alias format constraints, length boundaries, character whitelist enforcement, and collision management.
-     - `DOMAIN_RESTRICTION`: Allowed and prohibited destination domain filtering, protocol whitelist, and loopback/internal IP blocking.
-     - `TOKEN_POLICY`: Short token generation algorithms (Base62, alphanumeric), length configuration, and collision-retry policies.
-     - `CLICK_ANALYTICS`: Click tracking data models, timestamped access events, and aggregation query strategies.
-     - `URL_SHORTENER_CORE`: Core shortening service, in-memory/relational persistence, and 302 redirection handling.
-     - Any request falling outside these supported scopes is safely rejected or paused (`BLOCKED`), preventing uncontrolled mutation.
-   - **Strict Human Approval Gate**:
-     - Any proposed file mutation requires human approval. Missing, rejected, stale, or mismatched approvals permanently prevent code modification.
-     - The plan hash incorporates both the planned task graph and the implementation proposal hash. Any downstream tampering invalidates approval.
+5. **Governed Implementation & Real Build Validation (Milestone 10 & Remediation Architecture A–G)**:
+   - Extends the workbench with an end-to-end governed implementation pipeline that safely translates requirements into verifiable code modifications with comprehensive safety boundaries.
+   - **Criterion A: Real URL-Shortener Wiring & Scope Gating**:
+     - Proposed mutations to `LinkShortenerService.java` and `AliasValidator.java` are wired directly into real HTTP behavior (`POST /api/v1/links`, `GET /r/{tokenOrAlias}`, `GET /api/v1/links/{tokenOrAlias}/analytics`).
+     - Supported vertical slices: `ALIAS_VALIDATION`, `DOMAIN_RESTRICTION`, `TOKEN_POLICY`, `CLICK_ANALYTICS`, and `URL_SHORTENER_CORE`.
+     - Any request falling outside these supported scopes is safely rejected or paused (`BLOCKED`) with an explicit persisted reason (`IMPLEMENTATION_SCOPE_UNSUPPORTED`), preventing uncontrolled mutation.
+   - **Criterion B: Dynamic Requirement-Derived Bounds & Traceability**:
+     - Natural language requirements are parsed dynamically to extract validation constraints (e.g., custom minimum and maximum alias lengths such as minimum 4 rejecting 3-character aliases at runtime HTTP API level).
+     - Full end-to-end traceability is persisted, linking acceptance criteria (e.g., `AC-1`) to tasks, specialist roles, agent decisions, audit events, and API evidence.
+   - **Criterion C: Real Full Validation & Surefire Report Parsing**:
+     - Governed build execution invokes fixed `./mvnw --batch-mode clean verify` in the isolated workspace. Arbitrary commands or shell injection are strictly rejected.
+     - Parses Maven Surefire XML test reports (`SurefireReportParser`) from `target/surefire-reports/TEST-*.xml`, extracting exact test execution counts, failure counts, error counts, and elapsed times.
+     - Honest capability accounting distinguishes full workspace verification (`FULL_WORKSPACE_VERIFICATION`) from targeted test execution (`TARGETED_TEST_EXECUTION`) in persisted evidence.
+   - **Criterion D: Safe Brownfield Process/Container Isolation**:
+     - All mutations, patch applications, and build validations execute exclusively inside isolated disposable temporary directories (`Files.createTempDirectory`). The host repository and caller workspace remain completely untouched and verified pristine (checked via cryptographic SHA-256 fingerprinting before and after execution).
+     - For brownfield workflows, LinkForge applies approved changes strictly to a bounded disposable copy of the inspected repository. The submitted source repository remains byte-for-byte unchanged, proven by cryptographic hash comparisons of all source files before and after execution.
+     - Trusted build execution is performed exclusively inside a real, hardened container via `DockerContainerBuildExecutor`. LinkForge strictly refuses to run untrusted caller-supplied Maven wrappers, arbitrary scripts, or build configurations on the host. The container executor operates under strict hardening:
+       - Immutable base image pinned by digest (`maven:3.9.9-eclipse-temurin-21@sha256:4f3c7c7423e2dc92b34208a0d24c08e56d7eb596238b6d0e82eb0aaec6655519`).
+       - Network isolation enforced via `--network none`.
+       - Offline dependency resolution using a vetted, controlled Maven dependency cache (`~/.m2/repository` or configured path) mounted read-only into `/root/.m2/repository:ro`.
+       - Security options: `--rm`, `--network none`, `--memory 2048m`, `--cpus 2.0`, `--pids-limit 100`, `--security-opt no-new-privileges`, `--cap-drop ALL`, working directory set to `/workspace` (`-w /workspace`), bounded disposable copy mounted read-write (`-v <workspace>:/workspace:rw`), and Maven dependency cache mounted read-only (`-v <cache>:/root/.m2/repository:ro`), with cleared environment variables (`pb.environment().clear()`) ensuring zero host credentials, Docker socket mounts (`docker.sock`), or caller wrappers enter execution.
+     - **Safe-Unavailable Behavior**: When container isolation is unavailable (e.g., Docker daemon inactive or `linkforge.execution.container-isolation-available=false`), brownfield execution is safely blocked (`BLOCKED`, `MUTATION_BLOCKED`) with persisted reason `CONTAINER_ISOLATION_UNAVAILABLE`, refusing to fall back to host execution. Brownfield container integration tests conditionally skip when Docker is unavailable and report that skip clearly rather than claiming successful execution.
+   - **Criterion E: True Greenfield vs. Prepared Baseline**:
+     - **True Greenfield**: Initializes execution from an empty source baseline without pre-existing application source files. Generates production source (`GreenfieldApplication.java`, `@Service StandaloneUrlShortener.java`, and HTTP REST controller `@RestController GreenfieldShortenerController.java` exposing `POST /api/v1/greenfield/links` and `GET /r/{identifier}` with 302 redirect) and test source (`StandaloneUrlShortenerTest.java`, `GreenfieldHttpIntegrationTest.java`). Verified via `./mvnw --batch-mode clean verify` through real HTTP slice testing in the governed workspace.
+     - **Prepared Baseline**: Enhancements modifying the prepared URL shortener baseline within supported scopes are explicitly classified as `PREPARED_BASELINE_ENHANCEMENT` and wired into the existing controller/service/repository paths.
+   - **Criterion F: Workflow Lifecycle & Two-Phase Human Approval Gate**:
+     - Enforces a strict two-phase human governance flow:
+       1. **Plan Approval Gate (`WAITING_FOR_APPROVAL`, `PLAN_APPROVAL`)**: The human reviewer reviews the synthesized DAG task graph and approves via `POST /approve` with the cryptographic `planHash`.
+       2. **Specialist Coordination & Proposal Synthesis**: Approving the plan triggers concurrent specialist coordination. Coordination completion is strictly analysis/planning only, NOT `COMPLETED`. The workflow synthesizes an implementation proposal and pauses at `WAITING_FOR_APPROVAL` with stage `IMPLEMENTATION_PROPOSAL`.
+       3. **Proposal Approval Gate (`WAITING_FOR_APPROVAL`, `IMPLEMENTATION_PROPOSAL`)**: The human reviewer inspects the proposed file changes. A second `POST /approve` with the proposal's SHA-256 hash approves the changes.
+       4. **Governed Execution & Completion**: Approving the proposal hash triggers atomic workspace patching and Maven Wrapper build verification, transitioning the workflow to `COMPLETED` (`FINISHED`).
+       5. **Tamper & Stale Approval Protection**: If the plan or proposal changes after an approval, prior approvals are invalidated immediately.
+   - **Criterion G: Bounded Diagnosis & Repair Loop**:
+     - When non-transient build validation failures occur, LinkForge does not fail immediately. Instead, it enters an automated, bounded diagnosis and repair loop:
+       1. **Build Diagnosis Specialist (`BuildDiagnosisSpecialistAgent`)**: Inspects compiler errors, Surefire XML reports, and build logs to identify the root cause and affected files.
+       2. **Implementation Repair Specialist (`ImplementationRepairSpecialistAgent`)**: Formulates a targeted corrective patch proposal.
+       3. **Human Repair Gate (`REPAIR_APPROVAL`)**: The workflow transitions to `WAITING_FOR_APPROVAL` with stage `REPAIR_APPROVAL`, requiring explicit human approval before any repair is applied.
+       4. **Re-Verification in Isolated Workspace**: Upon approval, the repair is applied in the same isolated workspace and `./mvnw --batch-mode clean verify` is rerun.
+       5. **Bounded Attempts**: Repair attempts are bounded by a configurable maximum (`linkforge.execution.max-repair-attempts`, default 2).
+       6. **Verified Rollback**: If repair attempts are exhausted, rejected, or fail, the isolated workspace is restored from pre-application snapshots and verified against original hashes before entering the terminal `ROLLED_BACK` state.
    - **Model Safety & Schema Enforcement**:
-     - AI model proposals (or deterministic offline fallbacks) are parsed against strict JSON schemas.
-     - Model outputs must NEVER execute shell commands or directly mutate local filesystem files.
-     - Forbidden system calls (such as `Runtime.getRuntime().exec` or `ProcessBuilder`) and path traversal sequences (`../`, leading `/`) are immediately rejected.
-   - **Isolated Disposable Workspace**:
-     - All patch operations execute exclusively within an isolated, disposable temporary directory (`Files.createTempDirectory`). Never touches arbitrary caller-supplied paths.
-     - **Path Containment**: Relative paths are resolved against the isolated root; attempts to escape via symlinks or relative navigation are rejected.
-     - **Extension Whitelist**: Only allowed safe extensions (`.java`, `.xml`, `.properties`, `.json`, `.md`) are permitted. Executables, scripts, and archives are strictly forbidden.
-     - **Resource Caps**: Enforces hard caps on operation count (&le; 10 files), individual file size (&le; 512 KB), and total operation size (&le; 2 MB).
-     - **Duplicate Path Prevention**: Proposals with repeated file paths are rejected before application begins.
-     - **Optimistic Concurrency & Stale Hash Checks**: When modifying or deleting existing files, the caller's expected input SHA-256 hash is checked against current file content. If stale, mutation halts.
-     - **Atomic Swap Writes**: Files are written to temporary swap files and atomically renamed.
-     - **Verified Rollback**: If build validation fails, workspace files are restored from pre-application snapshots and verified against original hashes before entering the terminal `ROLLED_BACK` state.
-   - **Fixed Maven Wrapper Build Verification**:
-     - The child process executes only a fixed command: `./mvnw --batch-mode test -Dtest=CustomAliasValidationTest`. Arbitrary commands are completely rejected.
-     - **Sanitized Execution Environment**: The child process runs in a scrubbed environment stripped of credentials, tokens, Ollama settings, and API keys.
-     - **Bounded Execution & Output**: Build execution is bounded by timeout (60 seconds) and captured output is capped (10,000 characters) to prevent memory exhaustion.
-     - Persists exit code, duration, bounded output, and validation outcome in relational audit logs.
+     - AI model proposals (or deterministic offline fallbacks) are parsed against strict JSON schemas. Model outputs must NEVER execute shell commands or directly mutate local filesystem files.
+     - Forbidden system calls and path traversal sequences (`../`, leading `/`) are immediately rejected.
+   - **Atomic Patch Application & Resource Bounds**:
+     - Relative paths are resolved against the isolated root; extensions are restricted to `.java`, `.xml`, `.properties`, `.json`, `.md`.
+     - Enforces caps on operation count (&le; 10 files), file size (&le; 500 KB), total change size (&le; 2 MB), and build execution timeout (60 seconds).
+     - Files are written to temporary swap files and atomically renamed.
 
 ---
 
@@ -165,31 +182,34 @@ LinkForge provides resilient stage execution and graceful workflow termination:
 - `INITIALIZED`: Workflow instance created.
 - `IN_PROGRESS`: Actively executing analysis or coordination.
 - `WAITING_FOR_CLARIFICATION`: Paused awaiting operator clarification.
-- `WAITING_FOR_APPROVAL`: Plan or proposal generated; paused awaiting human plan approval.
+- `WAITING_FOR_APPROVAL`: Plan, proposal, or repair generated; paused awaiting human approval.
 - `PROPOSED`: Implementation changes synthesized; awaiting approval.
-- `APPROVED`: Human approval verified with matching cryptographic plan and proposal hash.
+- `APPROVED`: Human approval verified with matching cryptographic plan, proposal, or repair hash.
 - `APPLYING`: Atomic patches being verified and applied in isolated disposable workspace.
-- `VALIDATING`: Fixed Maven Wrapper test execution (`./mvnw --batch-mode test -Dtest=CustomAliasValidationTest`) executing in child process.
-- `REJECTED`: Plan or proposal rejected by human approver; execution terminated.
+- `VALIDATING`: Fixed Maven Wrapper build execution (`./mvnw --batch-mode clean verify`) executing in child process.
+- `REJECTED`: Plan, proposal, or repair rejected by human approver; execution terminated.
 - `COMPLETED`: Implementation applied and verified by build validation successfully.
 - `FAILED`: Execution terminated due to unrecoverable error or build failure.
 - `ROLLED_BACK`: Validation failed; workspace changes reverted and verified before entering terminal state.
-- `BLOCKED`: Request falls outside narrowly supported implementation scopes or violates safety policies.
+- `BLOCKED`: Request falls outside narrowly supported implementation scopes, isolation unavailable, or safety policy violation.
 - `CANCELLED`: Execution safely stopped; terminal state blocking subsequent transitions or resume.
 
 ### Workflow Stages (`WorkflowStage`)
+- `INTAKE`: Initial requirement submission and intake.
 - `REQUIREMENT_ANALYSIS`: Requirement interpretation and criteria extraction.
 - `SCENARIO_CLASSIFICATION`: Greenfield vs. brownfield vs. ambiguous classification.
 - `CODEBASE_INSPECTION`: Safe, read-only evidence gathering for brownfield workflows.
 - `TASK_PLANNING`: Dependency-aware task graph synthesis and plan hash computation.
-- `PLAN_APPROVAL`: Human governance gate prior to specialist dispatch or source mutation.
+- `PLAN_APPROVAL`: Human governance gate prior to specialist dispatch.
 - `SPECIALIST_COORDINATION`: Concurrent topological execution of specialist agents.
 - `IMPLEMENTATION_PROPOSAL`: Specialist agent generation of structured implementation proposals.
 - `IMPLEMENTATION_APPLICATION`: Isolated disposable workspace patching with containment and atomic writes.
 - `BUILD_VALIDATION`: Fixed Maven Wrapper build execution in sanitized environment.
+- `REPAIR_APPROVAL`: Human governance gate for proposed build diagnosis and repair patch.
 - `ROLLED_BACK`: Rollback execution restoring workspace to pristine state.
-- `BLOCKED`: Workflow blocked due to unsupported scope or safety violation.
+- `BLOCKED`: Workflow blocked due to unsupported scope, isolation unavailability, or safety violation.
 - `FINISHED`: Terminal stage following completion, rollback, or rejection.
+- `CANCELLED`: Terminal stage following authorized safe stop.
 
 
 ---
@@ -251,8 +271,12 @@ LinkForge provides resilient stage execution and graceful workflow termination:
 | `linkforge.execution.max-total-bytes` | `LINKFORGE_EXECUTION_MAX_TOTAL_BYTES` | `2097152` (2 MB) | Maximum allowable total byte size across all proposed files |
 | `linkforge.execution.build-timeout-seconds` | `LINKFORGE_EXECUTION_BUILD_TIMEOUT_SECONDS` | `60` | Maximum execution duration for child process build verification |
 | `linkforge.execution.max-output-chars` | `LINKFORGE_EXECUTION_MAX_OUTPUT_CHARS` | `10000` | Maximum captured characters of build process stdout/stderr output |
-| `linkforge.execution.build-command` | `LINKFORGE_EXECUTION_BUILD_COMMAND` | `./mvnw --batch-mode test -Dtest=CustomAliasValidationTest` | Fixed Maven Wrapper verification command |
+| `linkforge.execution.build-command` | `LINKFORGE_EXECUTION_BUILD_COMMAND` | `./mvnw --batch-mode clean verify` | Fixed Maven Wrapper verification command |
 | `linkforge.execution.allowed-extensions` | `LINKFORGE_EXECUTION_ALLOWED_EXTENSIONS` | `java,xml,properties,json,md` | Strict comma-delimited allowlist of editable file extensions |
+| `linkforge.execution.max-repair-attempts` | `LINKFORGE_EXECUTION_MAX_REPAIR_ATTEMPTS` | `2` | Maximum automated diagnosis and repair attempts upon build validation failure |
+| `linkforge.execution.container-isolation-available` | `LINKFORGE_EXECUTION_CONTAINER_ISOLATION_AVAILABLE` | `false` | Indicates whether container runtime isolation is available; blocks if isolation is required but unavailable |
+| `linkforge.execution.container-image` | `LINKFORGE_EXECUTION_CONTAINER_IMAGE` | `maven:3.9.9-eclipse-temurin-21@sha256:4f3c7c7423e2dc92b34208a0d24c08e56d7eb596238b6d0e82eb0aaec6655519` | Immutable container image pinned by SHA-256 digest for isolated brownfield builds |
+| `linkforge.execution.dependency-cache-path` | `LINKFORGE_EXECUTION_DEPENDENCY_CACHE_PATH` | `${user.home}/.m2/repository` | Path to vetted Maven dependency cache mounted read-only (`:ro`) into the container |
 
 ---
 
@@ -317,20 +341,14 @@ X-Approval-Token: dev-approval-token
 }
 ```
 
-**Response (200 OK - Approved and Specialist Coordination Executed)**:
+**Response (200 OK - Plan Approved; Paused Awaiting Proposal Approval)**:
 ```json
 {
   "id": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
-  "status": "COMPLETED",
-  "currentStage": "FINISHED",
-  "planHash": "3f8b1c4a...",
-  "approval": {
-    "approver": "lead-architect@example.com",
-    "decision": "APPROVED",
-    "planHash": "3f8b1c4a...",
-    "comments": "Plan verified for milestone 6 delivery.",
-    "reviewedAt": "2026-10-06T15:20:00Z"
-  },
+  "status": "WAITING_FOR_APPROVAL",
+  "currentStage": "IMPLEMENTATION_PROPOSAL",
+  "planHash": "b7c2d1e0...",
+  "approval": null,
   "tasks": [
     {
       "taskId": "TASK-1",
@@ -344,7 +362,51 @@ X-Approval-Token: dev-approval-token
       "status": "SUCCESS",
       "agentName": "data-persistence-specialist"
     }
-  ]
+  ],
+  "implementationProposal": {
+    "proposalId": "prop-e605d3e0-910a-4c28-98e1-0c58a69e3d09",
+    "scope": "URL_SHORTENER_CORE",
+    "supported": true,
+    "proposalHash": "b7c2d1e0...",
+    "changes": [
+      {
+        "relativePath": "src/main/java/com/linkforge/service/link/LinkShortenerService.java",
+        "operation": "MODIFY",
+        "description": "Implemented core URL shortener service with Base62 encoding and token storage."
+      }
+    ]
+  }
+}
+```
+
+**Approve the Implementation Proposal (`POST /api/v1/workflows/{id}/approve`)**:
+```http
+POST /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/approve
+Content-Type: application/json
+X-Approval-Token: dev-approval-token
+
+{
+  "decision": "APPROVED",
+  "planHash": "b7c2d1e0...",
+  "approver": "lead-architect@example.com",
+  "comments": "Implementation proposal verified and approved for governed execution."
+}
+```
+
+**Response (200 OK - Proposal Approved & Governed Build Completed)**:
+```json
+{
+  "id": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
+  "status": "COMPLETED",
+  "currentStage": "FINISHED",
+  "planHash": "b7c2d1e0...",
+  "approval": {
+    "approver": "lead-architect@example.com",
+    "decision": "APPROVED",
+    "planHash": "b7c2d1e0...",
+    "comments": "Implementation proposal verified and approved for governed execution.",
+    "reviewedAt": "2026-10-06T15:20:00Z"
+  }
 }
 ```
 
@@ -622,25 +684,25 @@ X-Operator-Token: dev-operator-token
 }
 ```
 
-> **Honest Capability Accounting**: For workflows that only complete planning and specialist analysis without execution (plan-only), `sourceCodeGeneration` and `buildExecution` are reported as `NOT_SUPPORTED`, and `automatedTestExecution` is reported as `UNVERIFIED`. Once a workflow is approved and executed through Milestone 10 governed execution, these are upgraded to `VERIFIED (ISOLATED_PROPOSAL)`, `VERIFIED (MAVEN_WRAPPER_BUILD)`, and `VERIFIED (TARGETED_TEST_EXECUTION)`. Non-success outcomes (e.g. `BLOCKED`, `TIMED_OUT`, `FAILED`, `ROLLED_BACK`) remain clearly distinct. Open-ended arbitrary repository editing, general-purpose arbitrary code generation, full regression test execution, and production deployment (`NOT_SUPPORTED`) remain deliberately out of scope.
+> **Honest Capability Accounting**: For workflows that only complete planning and specialist analysis without execution (plan-only), `sourceCodeGeneration` and `buildExecution` are reported as `NOT_SUPPORTED`, and `automatedTestExecution` is reported as `UNVERIFIED`. Once a workflow is approved and executed through Milestone 10 governed execution, these are upgraded to `VERIFIED (ISOLATED_PROPOSAL)`, `VERIFIED (MAVEN_WRAPPER_BUILD)`, and `VERIFIED (FULL_VERIFICATION)` (or `UNVERIFIED (ZERO_RELEVANT_TESTS)` if zero relevant tests are executed). Non-success outcomes (e.g. `BLOCKED`, `TIMED_OUT`, `FAILED`, `ROLLED_BACK`) remain clearly distinct. Open-ended arbitrary repository editing, general-purpose arbitrary code generation, full regression test execution, and production deployment (`NOT_SUPPORTED`) remain deliberately out of scope.
 
 ---
 
 ### 5. Governed Implementation & Build Validation (Milestone 10)
 
-This end-to-end governed workflow safely takes a supported URL-shortener change through specialist proposal synthesis, strict human approval, isolated temporary workspace patching, and Maven Wrapper build verification.
+This end-to-end governed workflow safely takes a supported URL-shortener change through specialist proposal synthesis, strict human approval, isolated temporary workspace patching, and fixed Maven Wrapper build verification.
 
 #### Governed Execution Architecture & Safety Boundaries
 
-- **Restricted Execution Scope**: Governed execution is strictly limited to LinkForge-controlled, allowlisted project fixtures copied into a temporary workspace directory (`pom.xml`, `mvnw`, `mvnw.cmd`, `.mvn/`, `src/`). To protect the host environment against untrusted wrapper scripts (`mvnw`/`mvnw.cmd`) and hostile Maven build plugins, caller-supplied repository paths (`repositoryPath`) are strictly rejected for execution with a persisted `BLOCKED` status, a `MUTATION_BLOCKED` audit event, and a `SUBMITTED_REPOSITORY_REJECTED` record. Brownfield read-only inspection and specialist planning remain fully supported.
-- **Process Isolation & Build Timeout**: Execution runs in a dedicated temporary workspace directory (not an OS sandbox or container). The child Maven process is governed by an enforced timeout (default: 60s). Process output is drained concurrently using a bounded collector reading in chunks, safely truncating long output and avoiding memory exhaustion even on a single massive line. If the timeout expires, the child process and all its descendants are forcibly terminated, output collection is stopped safely, and a `TIMED_OUT` execution record is persisted.
-- **Deterministic Alias Validation Vertical Slice**: Governed implementation currently supports deterministic custom alias validation enforcing 3–30 alphanumeric, hyphen, and underscore characters. The proposal safely modifies the core `AliasValidator` in `src/main/java/com/linkforge/service/link/` and creates executable unit tests in `src/test/java/com/linkforge/service/link/CustomAliasValidationTest.java`. The build validator runs these tests directly (`./mvnw --batch-mode test -Dtest=CustomAliasValidationTest`), not merely compiling them.
-- **Proposal Consistency & Hash Policy**:
-  - `CREATE` operations must not overwrite existing files.
-  - `MODIFY` and `DELETE` operations require an existing target file and a non-blank `expectedInputHash` matching the current file content.
-  - Model responses are strictly validated against operation and path policies prior to approval.
-  - The reviewed `planHash` cryptographically covers all planned tasks and exact file changes; the execution request must supply an exact matching `planHash`.
-- **Honest System Boundaries**: LinkForge does not claim generic source code generation, arbitrary repository execution, OS-level sandboxing, or production deployment. Production deployment remains `NOT_SUPPORTED`.
+- **Restricted Execution Scope & Execution Type Classification**:
+  - **`TRUE_GREENFIELD`**: Generates a complete standalone service from an empty source baseline with generated production source (`GreenfieldApplication.java`, `StandaloneUrlShortener.java`, `GreenfieldShortenerController.java` exposing `POST /api/v1/greenfield/links` and `GET /r/{identifier}`) and test source (`StandaloneUrlShortenerTest.java`, `GreenfieldHttpIntegrationTest.java`), verified via fixed `./mvnw --batch-mode clean verify` through real HTTP slice testing with persisted test evidence.
+  - **`PREPARED_BASELINE_ENHANCEMENT`**: Modifies the prepared URL shortener baseline within supported scopes (`ALIAS_VALIDATION`, `DOMAIN_RESTRICTION`, `TOKEN_POLICY`, `CLICK_ANALYTICS`, `URL_SHORTENER_CORE`), wired into the real controller/service/repository paths. Only workflows that start from an empty source baseline and generate runnable behavior from scratch are classified as `TRUE_GREENFIELD`.
+  - **`BROWNFIELD`**: Read-only codebase inspection, dynamic requirement-derived proposal generation targeting actual inspected files (without assuming fixed LinkForge package paths), and isolated container execution are supported. Approved changes are applied exclusively to a bounded disposable copy, proving the submitted source repository remains byte-for-byte unchanged. Execution runs via a hardened, network-isolated container executor (`DockerContainerBuildExecutor`) using an image pinned by digest (`maven:3.9.9-eclipse-temurin-21@sha256:4f3c7c7423e2dc92b34208a0d24c08e56d7eb596238b6d0e82eb0aaec6655519`) and a vetted read-only dependency cache (`/root/.m2/repository:ro`). Submitted wrappers or scripts are NEVER run on the host. If container isolation is unavailable, execution safely blocks (`BLOCKED`, `MUTATION_BLOCKED`) with reason `CONTAINER_ISOLATION_UNAVAILABLE` rather than falling back to host execution.
+- **Process Isolation & Build Timeout**: Execution runs in a dedicated temporary workspace directory. The child Maven process executes the fixed build command `./mvnw --batch-mode clean verify` with an enforced 60-second default timeout (`linkforge.execution.build-timeout-seconds=60`). Process output is drained concurrently using a bounded collector reading in chunks, safely truncating long output and avoiding memory exhaustion even on a single massive line. If the timeout expires, the child process and all its descendants are forcibly terminated, output collection is stopped safely, and a `TIMED_OUT` execution record is persisted.
+- **Requirement-Derived Alias Validation Bounds**: Alias validation bounds are extracted dynamically from the requirement and acceptance criteria (e.g. minimum 4 to maximum 30 characters). Both deterministic and model-backed proposals validate that generated `AliasValidator.java` and tests match the derived bounds; if a model proposal uses hardcoded or invalid bounds, LinkForge safely falls back to a trusted requirement-derived implementation. Generated tests include unit tests (`CustomAliasValidationTest.java`) and HTTP slice tests (`CustomAliasHttpValidationTest.java`) exercising the real HTTP API in the governed workspace.
+- **Connected Production Wiring & Acceptance Criterion Test Evidence**: Applied changes are wired into the real URL-shortener controller, service, and repository. Maven Surefire test XML reports (`SurefireReportParser`) are parsed to persist discovered test class/method identities, execution duration, outcomes, and criterion lineage. Each behavioral acceptance criterion covered by the proposal must have at least one passing test linked to that criterion. If any covered criterion lacks passing test coverage, the build is accounted as `UNVERIFIED (MISSING_CRITERION_COVERAGE)`. If any test fails, it is accounted as `UNVERIFIED (TESTS_FAILED)`. If zero relevant tests execute, it is accounted as `UNVERIFIED (ZERO_RELEVANT_TESTS)`. Only when `./mvnw --batch-mode clean verify` succeeds with passing test evidence for every covered criterion is automated testing accounted as `VERIFIED (FULL_VERIFICATION)`.
+- **Bounded Diagnosis & Repair Loop**: When non-transient compilation or test failures occur, LinkForge diagnoses the root cause (`BuildDiagnosisSpecialistAgent`), formulates a genuinely corrective repair proposal (`ImplementationRepairSpecialistAgent`) that refuses to replay failed patches unchanged, and pauses for human approval (`REPAIR_APPROVAL`). Upon approval, the repair is applied in the same isolated workspace and re-verified. If repair attempts are exhausted (bounded by `linkforge.execution.max-repair-attempts`, default 2) or rejected, workspace files are restored from pre-application snapshots and verified against original hashes, transitioning to `ROLLED_BACK`.
+- **Honest System Boundaries**: LinkForge does not claim generic arbitrary repository editing, OS-level container isolation when unavailable, or production deployment. Brownfield execution safely blocks when container isolation is unavailable, and production deployment remains `NOT_SUPPORTED`.
 
 #### Step 1: Create Workflow (`POST /api/v1/workflows`)
 ```http
@@ -648,13 +710,13 @@ POST /api/v1/workflows
 Content-Type: application/json
 
 {
-  "requirement": "Add custom alias validation enforcing alphanumeric characters between 3 and 30 characters"
+  "requirement": "Add custom alias validation enforcing minimum 4 and maximum 30 alphanumeric characters"
 }
 ```
-**Response (201 Created)**: Returns the workflow in `WAITING_FOR_APPROVAL` or `INITIALIZED`.
+**Response (201 Created)**: Returns the workflow in `WAITING_FOR_APPROVAL` with stage `PLAN_APPROVAL`.
 
 #### Step 2: Propose Implementation (`POST /api/v1/workflows/{id}/propose`)
-Specialist agents inspect the requirement, classify it into a supported scope (`ALIAS_VALIDATION`), and synthesize structured file change proposals with task and acceptance criterion lineage and expected input hashes.
+Specialist agents inspect the requirement, classify it into a supported scope (`ALIAS_VALIDATION`), derive bounds (min: 4, max: 30), and synthesize structured file change proposals with task and acceptance criterion lineage and expected input hashes.
 
 ```http
 POST /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/propose
@@ -676,31 +738,37 @@ POST /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/propose
       {
         "relativePath": "src/main/java/com/linkforge/service/link/AliasValidator.java",
         "operation": "MODIFY",
-        "content": "package com.linkforge.service.link; ...",
         "targetHash": "5ee2ab296dd1ad65ab43f4104fe9e67b37a36a694a4933243828ad4df2ed2853",
         "taskLineage": "TASK-1",
         "criterionLineage": "AC-1",
         "specialistRole": "SECURITY_VALIDATION",
-        "description": "Align custom alias validation to enforce 3 to 30 character length bounds."
+        "description": "Align custom alias validation to enforce requirement-derived bounds (min: 4, max: 30)."
       },
       {
         "relativePath": "src/test/java/com/linkforge/service/link/CustomAliasValidationTest.java",
         "operation": "CREATE",
-        "content": "package com.linkforge.service.link; ...",
         "targetHash": null,
         "taskLineage": "TASK-1",
         "criterionLineage": "AC-1",
         "specialistRole": "TESTING_QUALITY",
-        "description": "Added comprehensive executable validation tests covering minimum, maximum, invalid chars, null/blank, and out-of-range aliases."
+        "description": "Added unit tests covering minimum (4 chars), maximum (30 chars), and invalid characters."
+      },
+      {
+        "relativePath": "src/test/java/com/linkforge/api/CustomAliasHttpValidationTest.java",
+        "operation": "CREATE",
+        "targetHash": null,
+        "taskLineage": "TASK-1",
+        "criterionLineage": "AC-1",
+        "specialistRole": "TESTING_QUALITY",
+        "description": "Added HTTP API regression test verifying rejection of 3-character alias ('aaa') and acceptance of 4-character alias ('aaaa')."
       }
     ]
   }
 }
 ```
-*(You can also retrieve the current proposal at any time with `GET /api/v1/workflows/{id}/proposal`)*
 
 #### Step 3: Human Approval Gate (`POST /api/v1/workflows/{id}/approve`)
-The human reviewer inspects the planned tasks and proposed code modifications. The reviewer submits an approval decision with the exact cryptographic `planHash` that covers both the task plan and proposal. Mismatched or missing hashes are strictly rejected (HTTP 400).
+The human reviewer inspects the planned tasks and proposed code modifications. The reviewer submits an approval decision with the exact cryptographic `planHash` that covers both the task plan and proposal.
 
 ```http
 POST /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/approve
@@ -726,9 +794,7 @@ X-Approval-Token: dev-approval-token
 ```
 
 #### Step 4: Execute Governed Implementation (`POST /api/v1/workflows/{id}/execute`)
-Dispatches the approved proposal into an isolated temporary workspace. Applies containment, extension checks, operation bounds, atomic swap writes, and verifies the change using the Maven Wrapper child process.
-
-> **Safety Notice**: Caller-supplied execution parameters, arbitrary patches, or claimed evidence are strictly rejected server-side (`@JsonIgnoreProperties(ignoreUnknown = false)`). Only the validated `planHash` is accepted. Workflows with submitted repository paths are rejected for execution.
+Dispatches the approved proposal into an isolated temporary workspace. Applies containment, extension checks, operation bounds, atomic swap writes, and verifies the change using fixed `./mvnw --batch-mode clean verify` with 60-second timeout.
 
 ```http
 POST /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/execute
@@ -750,6 +816,7 @@ Content-Type: application/json
     "workflowId": "e605d3e0-910a-4c28-98e1-0c58a69e3d09",
     "status": "COMPLETED",
     "stage": "FINISHED",
+    "executionType": "PREPARED_BASELINE_ENHANCEMENT",
     "planHash": "a8f3b92c4d5e6f...",
     "appliedChanges": [
       {
@@ -763,24 +830,45 @@ Content-Type: application/json
         "operation": "CREATE",
         "newHash": "8a7c2b3d...",
         "appliedAt": "2026-10-06T18:00:01Z"
+      },
+      {
+        "relativePath": "src/test/java/com/linkforge/api/CustomAliasHttpValidationTest.java",
+        "operation": "CREATE",
+        "newHash": "9b8c3d4e...",
+        "appliedAt": "2026-10-06T18:00:01Z"
       }
     ],
     "buildValidation": {
-      "command": "./mvnw --batch-mode test -Dtest=CustomAliasValidationTest",
+      "command": "./mvnw --batch-mode clean verify",
       "exitCode": 0,
-      "durationMs": 3420,
+      "durationMs": 5420,
       "status": "SUCCESS",
-      "output": "[INFO] Scanning for projects...\n[INFO] Running com.linkforge.service.link.CustomAliasValidationTest\n[INFO] Tests run: 5, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS\n..."
+      "testReports": [
+        {
+          "testClass": "com.linkforge.service.link.CustomAliasValidationTest",
+          "testMethod": "customAliasMinLengthEnforced",
+          "status": "PASSED",
+          "durationMs": 12,
+          "criterionLineage": "AC-1"
+        },
+        {
+          "testClass": "com.linkforge.api.CustomAliasHttpValidationTest",
+          "testMethod": "customAliasMinLengthEnforcedThroughRealHttpApi",
+          "status": "PASSED",
+          "durationMs": 18,
+          "criterionLineage": "AC-1"
+        }
+      ],
+      "output": "[INFO] Scanning for projects...\n[INFO] Tests run: 88, Failures: 0, Errors: 0, Skipped: 0\n[INFO] BUILD SUCCESS\n..."
     },
     "rollback": null,
     "completedAt": "2026-10-06T18:00:05Z"
   }
 }
 ```
-*(Query the complete execution record at any time with `GET /api/v1/workflows/{id}/execution`)*
 
 #### Step 5: Verified Capability Accounting in Evidence (`GET /api/v1/workflows/{id}/evidence`)
-After successful governed execution, evidence reports:
+After successful governed execution with relevant tests discovered, evidence reports:
 ```json
 {
   "verificationStatus": {
@@ -791,7 +879,7 @@ After successful governed execution, evidence reports:
     "specialistAnalysis": "COMPLETED",
     "sourceCodeGeneration": "VERIFIED (ISOLATED_PROPOSAL)",
     "buildExecution": "VERIFIED (MAVEN_WRAPPER_BUILD)",
-    "automatedTestExecution": "VERIFIED (TARGETED_TEST_EXECUTION)",
+    "automatedTestExecution": "VERIFIED (FULL_VERIFICATION)",
     "deploymentAndRelease": "NOT_SUPPORTED"
   }
 }
@@ -800,16 +888,63 @@ After successful governed execution, evidence reports:
 ##### Capability Accounting Distinctions Across Workflow Lifecycle:
 - **Plan-Only Workflows** (planning and specialist coordination completed without execution):
   `sourceCodeGeneration`: `NOT_SUPPORTED`, `buildExecution`: `NOT_SUPPORTED`, `automatedTestExecution`: `UNVERIFIED`
-- **Successfully Executed Governed Workflows** (governed proposal applied and `./mvnw --batch-mode test -Dtest=CustomAliasValidationTest` succeeded):
+- **Fully Verified Workflows** (governed proposal applied, `./mvnw --batch-mode clean verify` succeeded, and passing test reports mapped to every covered criterion):
+  `sourceCodeGeneration`: `VERIFIED (ISOLATED_PROPOSAL)`, `buildExecution`: `VERIFIED (MAVEN_WRAPPER_BUILD)`, `automatedTestExecution`: `VERIFIED (FULL_VERIFICATION)`
+- **Targeted Test Execution** (targeted test run succeeded with passing tests for every covered criterion):
   `sourceCodeGeneration`: `VERIFIED (ISOLATED_PROPOSAL)`, `buildExecution`: `VERIFIED (MAVEN_WRAPPER_BUILD)`, `automatedTestExecution`: `VERIFIED (TARGETED_TEST_EXECUTION)`
-- **Blocked Workflows** (e.g. execution rejected for caller-supplied repository paths):
+- **Partially Covered Workflows** (build succeeded, but one or more covered behavioral criteria lack discovered passing test evidence):
+  `sourceCodeGeneration`: `VERIFIED (ISOLATED_PROPOSAL)`, `buildExecution`: `VERIFIED (MAVEN_WRAPPER_BUILD)`, `automatedTestExecution`: `UNVERIFIED (MISSING_CRITERION_COVERAGE)`
+- **Failed Test Workflows** (build completed but tests failed):
+  `sourceCodeGeneration`: `VERIFIED (ISOLATED_PROPOSAL)`, `buildExecution`: `FAILED (BUILD_FAILED)`, `automatedTestExecution`: `UNVERIFIED (TESTS_FAILED)`
+- **Zero Relevant Tests** (build succeeded but zero tests relevant to proposed criteria executed):
+  `sourceCodeGeneration`: `VERIFIED (ISOLATED_PROPOSAL)`, `buildExecution`: `VERIFIED (MAVEN_WRAPPER_BUILD)`, `automatedTestExecution`: `UNVERIFIED (ZERO_RELEVANT_TESTS)`
+- **Blocked Workflows** (e.g. brownfield execution blocked due to unavailable container isolation, or unsupported scope):
   `sourceCodeGeneration`: `BLOCKED`, `buildExecution`: `BLOCKED`, `automatedTestExecution`: `BLOCKED`
 - **Timed-Out Workflows** (child build process exceeded 60s timeout):
   `sourceCodeGeneration`: `FAILED (TIMED_OUT)`, `buildExecution`: `TIMED_OUT`, `automatedTestExecution`: `FAILED (TIMED_OUT)`
-- **Rolled-Back Workflows** (build validation failed and changes were verified rolled back):
+- **Rolled-Back Workflows** (build validation failed, repair attempts exhausted or rejected, and changes verified restored):
   `sourceCodeGeneration`: `ROLLED_BACK (VERIFIED_RESTORATION)`, `buildExecution`: `FAILED (ROLLED_BACK)`, `automatedTestExecution`: `FAILED (ROLLED_BACK)`
 - **Failed Workflows** (unrecoverable execution errors):
   `sourceCodeGeneration`: `FAILED`, `buildExecution`: `FAILED`, `automatedTestExecution`: `FAILED`
+
+#### Step 6: Governed Release-Readiness Gate (`POST /api/v1/workflows/{id}/release/approve`)
+Release readiness evaluates whether a completed workflow satisfies all quality, safety, and evidence criteria for release approval (build succeeded, all covered acceptance criteria verified with passing tests, and no blocking or rollback).
+
+- **Inspect Release Readiness (`GET /api/v1/workflows/{id}/release` or `/release-readiness`)**:
+```http
+GET /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/release
+```
+**Response (200 OK)**:
+```json
+{
+  "outcomeHash": "a1b2c3d4e5f6...",
+  "ready": true,
+  "reasons": [],
+  "approval": null,
+  "evaluatedAt": "2026-10-06T18:00:10Z"
+}
+```
+
+- **Approve or Reject Release Readiness (`POST /api/v1/workflows/{id}/release/approve` or `/release-readiness/approve`)**:
+Requires the exact SHA-256 `outcomeHash` (or `planHash`) persisted for the completed workflow.
+```http
+POST /api/v1/workflows/e605d3e0-910a-4c28-98e1-0c58a69e3d09/release/approve
+Content-Type: application/json
+X-Approval-Token: dev-approval-token
+
+{
+  "decision": "APPROVED",
+  "outcomeHash": "a1b2c3d4e5f6...",
+  "approver": "release-officer@example.com",
+  "comments": "Release approved for qualification."
+}
+```
+
+**Governance and Safety Rules**:
+- **Exact Hash Validation**: Requests with altered, missing, or mismatched hashes are rejected with `400 Bad Request` (`HASH_TAMPERED`).
+- **Readiness Invariants**: Approvals are rejected with `409 Conflict` if the workflow has failed builds/tests, incomplete criterion test coverage, incomplete execution, or was blocked/rolled back.
+- **Audit Trail Persistence**: Every approval or rejection is recorded immutably in workflow audit history (`RELEASE_APPROVED` or `RELEASE_REJECTED`).
+- **Explicit Boundary - Production Deployment Unsupported**: Release-readiness approval records governance authorization ONLY; LinkForge explicitly does NOT deploy the application (`deploymentAndRelease: NOT_SUPPORTED`).
 
 ---
 
@@ -844,7 +979,7 @@ Run the automated scenario test suite or executable script to verify all end-to-
 #### Expected Observable Outcomes
 | Scenario | Public API Action | Expected Outcome | Observable Gate / State |
 | :--- | :--- | :--- | :--- |
-| **1. Greenfield Shortener** | `POST /api/v1/workflows` &rarr; `POST .../approve` | Analyzed, planned into 5 tasks, approved, and coordinated | Status `COMPLETED`, Stage `FINISHED`, 5 specialist invocations, full audit history |
+| **1. Greenfield Shortener** | `POST /api/v1/workflows` &rarr; `POST .../approve` (plan) &rarr; `POST .../approve` (proposal) | Plan approved &rarr; specialists coordinated &rarr; paused for proposal approval &rarr; proposal approved, executed, and verified | Status `COMPLETED`, Stage `FINISHED`, 5 specialist invocations, full audit history |
 | **2. Ambiguous Clarification** | `POST /api/v1/workflows` &rarr; `POST .../clarifications` | Ambiguity detected with questions, clarified, revision incremented | Status `WAITING_FOR_CLARIFICATION` &rarr; revision 2 &rarr; `WAITING_FOR_APPROVAL` &rarr; `COMPLETED` |
 | **3. Brownfield Inspection** | `POST /api/v1/workflows` (with `repositoryPath`) | Safe read-only inspection extracts file stats & languages from disposable fixture | `codebaseEvidenceAvailable=true`, local host paths omitted, status `COMPLETED` |
 | **4. Human Approval Gate** | `POST /api/v1/workflows` &rarr; `POST .../approve` (rejection) | Blocked in `WAITING_FOR_APPROVAL`, tampered hash rejected (400), rejected plan permanently locked | Status `REJECTED`, Stage `PLAN_APPROVAL`, subsequent actions return 409 Conflict |
@@ -861,6 +996,12 @@ Execute the complete automated test suite across all milestones:
 ```bash
 # Run all verification tests across all milestones (1-10)
 ./mvnw clean verify
+
+# Run Remediation Criteria A-G real URL-shortener path integration tests
+./mvnw test -Dtest=RealUrlShortenerPathIntegrationTest
+
+# Run Brownfield isolated container execution tests
+./mvnw test -Dtest=BrownfieldGovernedExecutionIntegrationTest
 
 # Run Milestone 10 governed execution safety and boundary unit tests
 ./mvnw test -Dtest=GovernedExecutionSafetyTest

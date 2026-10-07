@@ -42,7 +42,8 @@ public record WorkflowResponse(
         WorkflowCancellation cancellation,
         WorkflowSummaryResponse summary,
         ImplementationProposal implementationProposal,
-        GovernedExecutionRecord executionRecord
+        GovernedExecutionRecord executionRecord,
+        com.linkforge.domain.workflow.release.ReleaseReadinessOutcome releaseReadiness
 ) {
     public static WorkflowResponse from(WorkflowRun run) {
         String repoSummary = run.getRepositoryEvidence() != null
@@ -75,7 +76,8 @@ public record WorkflowResponse(
                 run.getCancellation(),
                 WorkflowSummaryResponse.from(run),
                 run.getImplementationProposal(),
-                run.getExecutionRecord()
+                run.getExecutionRecord(),
+                run.getReleaseReadiness()
         );
     }
 }

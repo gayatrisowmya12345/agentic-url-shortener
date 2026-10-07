@@ -75,12 +75,12 @@ class WorkflowSpecialistCoordinationIntegrationTest {
         String id = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asText();
         String planHash = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("planHash").asText();
 
-        MvcResult result = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.currentStage").value("FINISHED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
                 .andExpect(jsonPath("$.tasks", hasSize(5)))
                 .andExpect(jsonPath("$.tasks[0].status").value("COMPLETED"))
                 .andExpect(jsonPath("$.tasks[1].status").value("COMPLETED"))
@@ -100,6 +100,15 @@ class WorkflowSpecialistCoordinationIntegrationTest {
                 .andExpect(jsonPath("$.events[*].eventType", hasItem("COORDINATION_COMPLETED")))
                 .andReturn();
 
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.currentStage").value("FINISHED"));
+
         // Verify GET /api/v1/workflows/{id} returns full coordination state
         mockMvc.perform(get("/api/v1/workflows/" + id))
                 .andExpect(status().isOk())
@@ -112,8 +121,18 @@ class WorkflowSpecialistCoordinationIntegrationTest {
     @DisplayName("Brownfield workflow coordinates specialist tasks informed by repository evidence")
     void brownfieldWorkflowExecutesSpecialistCoordinationWithEvidence() throws Exception {
         Path repo = approvedRoot.resolve("brownfield-repo");
-        Files.createDirectories(repo.resolve("src"));
+        Path repoSrc = repo.resolve("src/main/java/com/example/service");
+        Files.createDirectories(repoSrc);
         Files.writeString(repo.resolve("pom.xml"), "<project><artifactId>service</artifactId></project>");
+        Files.writeString(repoSrc.resolve("LinkShortenerService.java"), """
+                package com.example.service;
+
+                public class LinkShortenerService {
+                    public String shorten(String url, String alias) {
+                        return "short";
+                    }
+                }
+                """);
 
         String payload = """
                 {
@@ -139,7 +158,8 @@ class WorkflowSpecialistCoordinationIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
                 .andExpect(jsonPath("$.tasks", hasSize(3)))
                 .andExpect(jsonPath("$.tasks[0].status").value("COMPLETED"))
                 .andExpect(jsonPath("$.tasks[1].status").value("COMPLETED"))

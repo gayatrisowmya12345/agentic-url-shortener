@@ -12,6 +12,7 @@ public enum ImplementationScope {
     TOKEN_POLICY("Token Generation Policy", "Configures Base62 short token length and uniqueness constraints."),
     CLICK_ANALYTICS("Click Analytics Tracking", "Enhances click resolution tracking and analytics filters."),
     URL_SHORTENER_CORE("Core URL Shortener Service", "Core URL shortener routing, storage, and link policies."),
+    GREENFIELD_SERVICE("Greenfield URL Shortener Service", "Builds a standalone URL shortener service from an empty source baseline."),
     UNKNOWN("Unsupported Scope", "Requirement falls outside the supported URL-shortener engineering workbench scope.");
 
     private final String displayName;
@@ -41,6 +42,10 @@ public enum ImplementationScope {
                 || lower.contains("shopping cart") || lower.contains("e-commerce") || lower.contains("neural net")
                 || lower.contains("image recognition") || lower.contains("game engine") || lower.contains("flight booking")) {
             return UNKNOWN;
+        }
+
+        if (lower.contains("greenfield") || lower.contains("empty source baseline") || lower.contains("from scratch") || lower.contains("standalone url shortener")) {
+            return GREENFIELD_SERVICE;
         }
 
         if (lower.contains("alias") || lower.contains("custom alias")) {

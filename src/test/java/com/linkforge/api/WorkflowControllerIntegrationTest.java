@@ -26,6 +26,9 @@ class WorkflowControllerIntegrationTest {
     @Autowired
     private MockMvc mockMvc;
 
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
+
     @Test
     @DisplayName("POST /api/v1/workflows creates and completes workflow for clear requirement")
     void createWorkflowClearPath() throws Exception {
@@ -67,9 +70,27 @@ class WorkflowControllerIntegrationTest {
                 }
                 """, planHash);
 
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(approvePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+        String approveProposalPayload = String.format("""
+                {
+                  "decision": "APPROVED",
+                  "planHash": "%s",
+                  "approver": "lead-architect",
+                  "comments": "Proposal verified and approved"
+                }
+                """, proposalHash);
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(approveProposalPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"));

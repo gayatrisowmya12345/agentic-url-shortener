@@ -159,15 +159,33 @@ class RepeatableWorkflowScenariosIntegrationTest {
                 }
                 """, planHash);
 
-        mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
+        MvcResult approvePlanResult = mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(approvePayload))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andExpect(jsonPath("$.tasks[0].status").value("COMPLETED"))
+                .andExpect(jsonPath("$.specialistInvocations", hasSize(5)))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approvePlanResult.getResponse().getContentAsString()).get("planHash").asText();
+        String approveProposalPayload = String.format("""
+                {
+                  "decision": "APPROVED",
+                  "planHash": "%s",
+                  "approver": "lead-architect@example.com",
+                  "comments": "Plan approved for autonomous specialist coordination"
+                }
+                """, proposalHash);
+
+        mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(approveProposalPayload))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"))
-                .andExpect(jsonPath("$.approval.approver").value("lead-architect@example.com"))
-                .andExpect(jsonPath("$.tasks[0].status").value("COMPLETED"))
-                .andExpect(jsonPath("$.specialistInvocations", hasSize(5)));
+                .andExpect(jsonPath("$.approval.approver").value("lead-architect@example.com"));
 
         // Step 3: Verify operator audit history endpoint
         mockMvc.perform(get("/api/v1/workflows/" + workflowId + "/history"))
@@ -200,9 +218,9 @@ class RepeatableWorkflowScenariosIntegrationTest {
                 .andExpect(jsonPath("$.criteriaEvidence[0].status").value("ANALYZED"))
                 .andExpect(jsonPath("$.verificationStatus.requirementAnalysis").value("COMPLETED"))
                 .andExpect(jsonPath("$.verificationStatus.specialistAnalysis").value("COMPLETED"))
-                .andExpect(jsonPath("$.verificationStatus.sourceCodeGeneration").value("NOT_SUPPORTED"))
-                .andExpect(jsonPath("$.verificationStatus.buildExecution").value("NOT_SUPPORTED"))
-                .andExpect(jsonPath("$.verificationStatus.automatedTestExecution").value("UNVERIFIED"))
+                .andExpect(jsonPath("$.verificationStatus.sourceCodeGeneration").value("VERIFIED (ISOLATED_PROPOSAL)"))
+                .andExpect(jsonPath("$.verificationStatus.buildExecution").value("VERIFIED (MAVEN_WRAPPER_BUILD)"))
+                .andExpect(jsonPath("$.verificationStatus.automatedTestExecution").value("VERIFIED (FULL_VERIFICATION)"))
                 .andExpect(jsonPath("$.verificationStatus.deploymentAndRelease").value("NOT_SUPPORTED"));
     }
 
@@ -287,9 +305,26 @@ class RepeatableWorkflowScenariosIntegrationTest {
                 }
                 """, planHash);
 
-        mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
+        MvcResult approvePlanResult = mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(approvePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approvePlanResult.getResponse().getContentAsString()).get("planHash").asText();
+        String approveProposalPayload = String.format("""
+                {
+                  "decision": "APPROVED",
+                  "planHash": "%s",
+                  "approver": "architect@example.com"
+                }
+                """, proposalHash);
+
+        mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(approveProposalPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
@@ -355,7 +390,8 @@ class RepeatableWorkflowScenariosIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(approvePayload))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("COMPLETED"));
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"));
     }
 
     // =========================================================================
@@ -513,10 +549,29 @@ class RepeatableWorkflowScenariosIntegrationTest {
                 }
                 """, planHash);
 
-        mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
+        MvcResult approvePlanResult = mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
                         .header("X-Auth-Token", "dev-approval-token")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(approvePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approvePlanResult.getResponse().getContentAsString()).get("planHash").asText();
+        String approveProposalPayload = String.format("""
+                {
+                  "decision": "APPROVED",
+                  "planHash": "%s",
+                  "approver": "lead-architect@example.com",
+                  "comments": "Plan approved following automatic retry recovery"
+                }
+                """, proposalHash);
+
+        mockMvc.perform(post("/api/v1/workflows/" + workflowId + "/approve")
+                        .header("X-Auth-Token", "dev-approval-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(approveProposalPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"));
@@ -636,10 +691,18 @@ class RepeatableWorkflowScenariosIntegrationTest {
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.agentDecisions", not(empty())));
 
-            // Approve plan
-            mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+            MvcResult approvePlanResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                    .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                    .andReturn();
+
+            String proposalHash = objectMapper.readTree(approvePlanResult.getResponse().getContentAsString()).get("planHash").asText();
+            mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.status").value("COMPLETED"));
         } finally {

@@ -19,6 +19,7 @@ import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -59,7 +60,8 @@ public class WorkflowEvidenceService {
                 taskTraceability,
                 verificationStatus,
                 eventLinkageStatus,
-                Instant.now()
+                Instant.now(),
+                run.getReleaseReadiness()
         );
     }
 
@@ -69,16 +71,26 @@ public class WorkflowEvidenceService {
             return Collections.emptyList();
         }
 
-        Map<String, List<SpecialistInvocation>> criterionToInvocations = run.getSpecialistInvocations().stream()
-                .flatMap(inv -> inv.addressedCriteria().stream().map(c -> Map.entry(c, inv)))
-                .collect(Collectors.groupingBy(Map.Entry::getKey, Collectors.mapping(Map.Entry::getValue, Collectors.toList())));
+        Map<String, List<SpecialistInvocation>> criterionToInvocations = new HashMap<>();
+        for (SpecialistInvocation inv : run.getSpecialistInvocations()) {
+            if (inv.addressedCriteria() != null) {
+                for (String c : inv.addressedCriteria()) {
+                    if (c == null || c.isBlank()) continue;
+                    for (String part : c.split("[,;\\s]+")) {
+                        if (!part.isBlank()) {
+                            criterionToInvocations.computeIfAbsent(normalizeCriterionId(part), k -> new ArrayList<>()).add(inv);
+                        }
+                    }
+                }
+            }
+        }
 
         List<CriterionEvidenceItem> items = new ArrayList<>();
         for (int i = 0; i < rawCriteria.size(); i++) {
             String criterion = rawCriteria.get(i);
             String criterionId = SpecialistCriteriaMapper.extractOrAssignId(criterion, i);
 
-            List<SpecialistInvocation> invocations = criterionToInvocations.getOrDefault(criterionId, List.of());
+            List<SpecialistInvocation> invocations = criterionToInvocations.getOrDefault(normalizeCriterionId(criterionId), List.of());
             List<SpecialistEvidenceDetail> findings = invocations.stream()
                     .map(inv -> new SpecialistEvidenceDetail(
                             inv.taskId(),
@@ -115,10 +127,10 @@ public class WorkflowEvidenceService {
                 status = "UNCOVERED";
             }
 
-            // Only link events that actually reference this specific criterion
+            // Only link events that actually reference this specific criterion as an exact token
             List<String> criterionEvents = run.getEvents().stream()
-                    .filter(e -> (e.description() != null && e.description().contains(criterionId))
-                            || (e.eventType() != null && e.eventType().contains(criterionId)))
+                    .filter(e -> textContainsCriterionToken(e.description(), criterionId)
+                            || textContainsCriterionToken(e.eventType(), criterionId))
                     .map(WorkflowEvent::eventType)
                     .distinct()
                     .toList();
@@ -127,7 +139,37 @@ public class WorkflowEvidenceService {
                     ? "EVENT_LEVEL_LINKAGE_UNAVAILABLE"
                     : "LINKED";
 
+            String productionPath = null;
+            String testPath = null;
+            if (run.getImplementationProposal() != null) {
+                for (var change : run.getImplementationProposal().changes()) {
+                    if (change.criterionLineage() != null && criterionLineageMatches(change.criterionLineage(), criterionId)) {
+                        if (change.path().contains("src/test/")) {
+                            testPath = change.path();
+                        } else {
+                            productionPath = change.path();
+                        }
+                    }
+                }
+            }
+
             boolean hasPersistedEvidence = !findings.isEmpty();
+
+            String validationStatus = "UNVERIFIED";
+            if (run.getExecutionRecord() != null && run.getExecutionRecord().buildValidation() != null) {
+                var bVal = run.getExecutionRecord().buildValidation();
+                boolean critHasPassingTest = bVal.testReports() != null && bVal.testReports().stream()
+                        .anyMatch(t -> t.isPassed() && testCoversCriterion(t, criterionId));
+                boolean critHasFailedTest = bVal.testReports() != null && bVal.testReports().stream()
+                        .anyMatch(t -> t.isFailed() && testCoversCriterion(t, criterionId));
+                if (critHasPassingTest && !critHasFailedTest) {
+                    validationStatus = "PASSED";
+                } else if (critHasFailedTest) {
+                    validationStatus = "FAILED";
+                } else {
+                    validationStatus = "UNVERIFIED";
+                }
+            }
 
             items.add(new CriterionEvidenceItem(
                     criterionId,
@@ -138,7 +180,10 @@ public class WorkflowEvidenceService {
                     findings,
                     criterionEvents,
                     eventLinkageStatus,
-                    hasPersistedEvidence
+                    hasPersistedEvidence,
+                    productionPath,
+                    testPath,
+                    validationStatus
             ));
         }
 
@@ -148,8 +193,8 @@ public class WorkflowEvidenceService {
     private boolean matchesTask(PlannedTask task, String criterionId, List<SpecialistInvocation> invocations) {
         boolean directMatch = invocations.stream().anyMatch(inv -> inv.taskId().equals(task.taskId()));
         if (directMatch) return true;
-        if (task.description() != null && task.description().contains(criterionId)) return true;
-        return task.title() != null && task.title().contains(criterionId);
+        if (textContainsCriterionToken(task.description(), criterionId)) return true;
+        return textContainsCriterionToken(task.title(), criterionId);
     }
 
     private List<TaskTraceabilityItem> buildTaskTraceability(WorkflowRun run) {
@@ -187,7 +232,16 @@ public class WorkflowEvidenceService {
 
     private ExecutionVerificationStatus buildVerificationStatus(WorkflowRun run) {
         String reqAnalysis = run.getAcceptanceCriteria().isEmpty() ? "PENDING" : "COMPLETED";
-        String scenarioClass = run.getScenario() != null ? run.getScenario().name() : "PENDING";
+
+        GovernedExecutionRecord execRecord = run.getExecutionRecord();
+        String scenarioClass;
+        if (execRecord != null && execRecord.executionType() != null) {
+            scenarioClass = execRecord.executionType();
+        } else if (run.getScenario() != null) {
+            scenarioClass = run.getScenario().name();
+        } else {
+            scenarioClass = "PENDING";
+        }
 
         String codebaseInspection;
         if (run.getScenario() == Scenario.BROWNFIELD) {
@@ -229,7 +283,6 @@ public class WorkflowEvidenceService {
         String buildExecution;
         String automatedTestExecution;
 
-        GovernedExecutionRecord execRecord = run.getExecutionRecord();
         if (execRecord == null) {
             sourceCodeGeneration = "NOT_SUPPORTED";
             buildExecution = "NOT_SUPPORTED";
@@ -237,16 +290,59 @@ public class WorkflowEvidenceService {
         } else {
             String execStatus = execRecord.status() != null ? execRecord.status().toUpperCase(Locale.ROOT) : "";
             BuildValidationResult buildResult = execRecord.buildValidation();
-            boolean isTestCommand = buildResult != null && buildResult.command() != null && buildResult.command().contains("test");
-            boolean testSucceeded = "COMPLETED".equals(execStatus) && buildResult != null && buildResult.isSuccess();
+            boolean isTestCommand = buildResult != null && buildResult.command() != null
+                    && (buildResult.command().contains("test") || buildResult.command().contains("verify"));
+
+            boolean hasFailedTests = buildResult != null && (!buildResult.isSuccess() || buildResult.exitCode() != 0
+                    || buildResult.failedTests() > 0);
+
+            java.util.Set<String> coveredCriteria = getCoveredCriteria(run);
 
             switch (execStatus) {
                 case "COMPLETED" -> {
                     sourceCodeGeneration = "VERIFIED (ISOLATED_PROPOSAL)";
                     buildExecution = "VERIFIED (MAVEN_WRAPPER_BUILD)";
-                    automatedTestExecution = (testSucceeded && isTestCommand)
-                            ? "VERIFIED (TARGETED_TEST_EXECUTION)"
-                            : "UNVERIFIED";
+
+                    if (buildResult == null) {
+                        automatedTestExecution = "UNVERIFIED";
+                    } else if (hasFailedTests) {
+                        automatedTestExecution = "UNVERIFIED (TESTS_FAILED)";
+                    } else if (!buildResult.isSuccess()) {
+                        automatedTestExecution = "UNVERIFIED";
+                    } else if (buildResult.totalTests() == 0 || buildResult.testReports() == null || buildResult.testReports().isEmpty()) {
+                        automatedTestExecution = "UNVERIFIED (ZERO_RELEVANT_TESTS)";
+                    } else if (!coveredCriteria.isEmpty()) {
+                        java.util.Set<String> satisfiedCriteria = new java.util.LinkedHashSet<>();
+                        for (String critId : coveredCriteria) {
+                            boolean hasPassingTest = buildResult.testReports().stream()
+                                    .anyMatch(t -> t.isPassed() && testCoversCriterion(t, critId));
+                            if (hasPassingTest) {
+                                satisfiedCriteria.add(critId);
+                            }
+                        }
+
+                        if (satisfiedCriteria.isEmpty()) {
+                            automatedTestExecution = "UNVERIFIED (ZERO_RELEVANT_TESTS)";
+                        } else if (satisfiedCriteria.size() < coveredCriteria.size()) {
+                            automatedTestExecution = "UNVERIFIED (MISSING_CRITERION_COVERAGE)";
+                        } else {
+                            automatedTestExecution = (isTestCommand && buildResult.fullVerification())
+                                    ? "VERIFIED (FULL_VERIFICATION)"
+                                    : "VERIFIED (TARGETED_TEST_EXECUTION)";
+                        }
+                    } else {
+                        boolean anyPassingRelevant = buildResult.testReports().stream()
+                                .anyMatch(t -> t.isPassed() && isRelevantTest(t, run.getImplementationProposal(), run.getAcceptanceCriteria()));
+                        if (anyPassingRelevant && isTestCommand) {
+                            automatedTestExecution = buildResult.fullVerification()
+                                    ? "VERIFIED (FULL_VERIFICATION)"
+                                    : "VERIFIED (TARGETED_TEST_EXECUTION)";
+                        } else if (!anyPassingRelevant) {
+                            automatedTestExecution = "UNVERIFIED (ZERO_RELEVANT_TESTS)";
+                        } else {
+                            automatedTestExecution = "UNVERIFIED";
+                        }
+                    }
                 }
                 case "TIMED_OUT" -> {
                     sourceCodeGeneration = "FAILED (TIMED_OUT)";
@@ -288,5 +384,119 @@ public class WorkflowEvidenceService {
                 automatedTestExecution,
                 "NOT_SUPPORTED"   // deploymentAndRelease: no deployment/release performed
         );
+    }
+
+    public static java.util.Set<String> getCoveredCriteria(WorkflowRun run) {
+        java.util.Set<String> covered = new java.util.LinkedHashSet<>();
+        var proposal = run.getImplementationProposal();
+        if (proposal == null && run.getExecutionRecord() != null) {
+            proposal = run.getExecutionRecord().proposal();
+        }
+        if (proposal != null && proposal.changes() != null) {
+            for (var change : proposal.changes()) {
+                if (change.criterionLineage() != null && !change.criterionLineage().isBlank()) {
+                    for (String part : change.criterionLineage().split("[,;\\s]+")) {
+                        if (!part.isBlank()) {
+                            covered.add(part.trim());
+                        }
+                    }
+                }
+            }
+        }
+        return covered;
+    }
+
+    public static String normalizeCriterionId(String criterionId) {
+        if (criterionId == null) {
+            return "";
+        }
+        return criterionId.trim().toUpperCase(Locale.ROOT);
+    }
+
+    public static boolean criterionLineageMatches(String lineage, String criterionId) {
+        if (lineage == null || criterionId == null || criterionId.isBlank()) {
+            return false;
+        }
+        String normalizedCrit = normalizeCriterionId(criterionId);
+        for (String part : lineage.split("[,;\\s]+")) {
+            if (part.isBlank()) continue;
+            if (normalizeCriterionId(part).equals(normalizedCrit)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean textContainsCriterionToken(String text, String criterionId) {
+        if (text == null || criterionId == null || criterionId.isBlank()) {
+            return false;
+        }
+        String normalizedTarget = normalizeCriterionId(criterionId);
+        if (normalizedTarget.isEmpty()) {
+            return false;
+        }
+        // Split text on whitespace, commas, semicolons, colons, quotes, brackets, parens, slashes, or underscores.
+        // Hyphens are preserved as part of criterion IDs (e.g. AC-1, AC-10).
+        String[] rawTokens = text.split("[\\s,;:()\\[\\]\"'{}`/\\\\_]+");
+        for (String rawToken : rawTokens) {
+            if (rawToken.isBlank()) continue;
+            // Strip leading or trailing punctuation except hyphens (e.g., "AC-1.", "#AC-1", "!AC-1")
+            String token = rawToken.replaceAll("^[\\p{Punct}&&[^-]]+|[\\p{Punct}&&[^-]]+$", "");
+            if (normalizeCriterionId(token).equals(normalizedTarget)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public static boolean testCoversCriterion(
+            com.linkforge.domain.workflow.implementation.TestReportItem test,
+            String criterionId
+    ) {
+        if (test == null || criterionId == null || criterionId.isBlank()) {
+            return false;
+        }
+        String normalizedCrit = normalizeCriterionId(criterionId);
+        if (test.criterionLineage() != null) {
+            for (String lineage : test.criterionLineage()) {
+                if (lineage == null || lineage.isBlank()) continue;
+                for (String part : lineage.split("[,;\\s]+")) {
+                    if (part.isBlank()) continue;
+                    if (normalizeCriterionId(part).equals(normalizedCrit)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private boolean isRelevantTest(
+            com.linkforge.domain.workflow.implementation.TestReportItem test,
+            com.linkforge.domain.workflow.implementation.ImplementationProposal proposal,
+            List<String> criteria
+    ) {
+        if (test == null) return false;
+        if (test.criterionLineage() != null && !test.criterionLineage().isEmpty()) {
+            if (criteria != null && !criteria.isEmpty()) {
+                for (String c : criteria) {
+                    if (testCoversCriterion(test, c)) {
+                        return true;
+                    }
+                }
+            } else {
+                return true;
+            }
+        }
+        if (proposal != null && proposal.changes() != null) {
+            for (var change : proposal.changes()) {
+                String fileName = java.nio.file.Path.of(change.path()).getFileName().toString();
+                String baseName = fileName.endsWith(".java") ? fileName.substring(0, fileName.length() - 5) : fileName;
+                if (test.testSuite() != null && test.testSuite().contains(baseName)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 }

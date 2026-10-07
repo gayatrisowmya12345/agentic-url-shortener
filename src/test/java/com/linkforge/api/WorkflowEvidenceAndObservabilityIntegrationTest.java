@@ -95,8 +95,8 @@ class WorkflowEvidenceAndObservabilityIntegrationTest {
         mockMvc.perform(get("/api/v1/workflows/" + id + "/history"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workflowId").value(id))
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.currentStage").value("FINISHED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
                 .andExpect(jsonPath("$.totalEvents", greaterThan(0)))
                 .andExpect(jsonPath("$.events", not(empty())))
                 .andExpect(jsonPath("$.events[0].eventId").isNotEmpty())
@@ -118,7 +118,7 @@ class WorkflowEvidenceAndObservabilityIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workflowId").value(id))
                 .andExpect(jsonPath("$.scenario").value("GREENFIELD"))
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
                 .andExpect(jsonPath("$.planApproved").value(true))
                 .andExpect(jsonPath("$.repositoryPath").doesNotExist())
                 .andExpect(jsonPath("$.codebaseEvidenceAvailable").value(false))
@@ -155,7 +155,7 @@ class WorkflowEvidenceAndObservabilityIntegrationTest {
         mockMvc.perform(get("/api/v1/workflows/" + id + "/summary"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workflowId").value(id))
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
                 .andExpect(jsonPath("$.requirementRevision").value(1))
                 .andExpect(jsonPath("$.taskCount", greaterThan(0)))
                 .andExpect(jsonPath("$.completedTaskCount", greaterThan(0)))
@@ -255,7 +255,7 @@ class WorkflowEvidenceAndObservabilityIntegrationTest {
         mockMvc.perform(get("/api/v1/workflows/" + id + "/history"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workflowId").value(id))
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
                 .andExpect(jsonPath("$.totalEvents", greaterThan(0)));
 
         // Evidence endpoint succeeds by rehydrating from H2

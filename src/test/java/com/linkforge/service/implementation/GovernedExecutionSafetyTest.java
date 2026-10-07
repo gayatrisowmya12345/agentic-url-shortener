@@ -421,13 +421,16 @@ class GovernedExecutionSafetyTest {
                         "./mvnw --batch-mode test -Dtest=CustomAliasValidationTest", 1, 450, "Compilation error: syntax error", "BUILD_FAILED", java.time.Instant.now()
                 ));
 
+        GovernedExecutionProperties rollbackProps = new GovernedExecutionProperties();
+        rollbackProps.setMaxRepairAttempts(0);
+
         GovernedExecutionService serviceWithFailingBuild = new GovernedExecutionService(
                 proposerAgent,
                 patchApplier,
                 failingValidator,
                 workflowRepository,
                 new CodebaseInspectionProperties(),
-                executionProperties
+                rollbackProps
         );
 
         WorkflowRun run = new WorkflowRun("Create a URL shortener with custom alias validation");
@@ -766,5 +769,48 @@ class GovernedExecutionSafetyTest {
             // Any change with MODEL_SPECIALIST must not exist
             assertThat(proposal.changes()).noneMatch(c -> "MODEL_SPECIALIST".equals(c.specialistRole()));
         }
+    }
+
+    @Test
+    @DisplayName("Safety Boundary 25: Untrusted submitted wrapper is never executed even when flag is true and Docker is available")
+    void untrustedSubmittedWrapperNeverExecutedEvenWhenFlagIsTrueAndDockerAvailable() throws IOException {
+        // 1. Explicitly enable containerIsolationAvailable flag
+        executionProperties.setContainerIsolationAvailable(true);
+
+        // 2. Create a disposable submitted repository fixture with an untrusted wrapper
+        Path submittedRepo = tempDir.resolve("untrusted-submitted-repo");
+        Files.createDirectories(submittedRepo);
+        Files.writeString(submittedRepo.resolve("pom.xml"), "<project></project>");
+
+        Path markerFile = tempDir.resolve("untrusted-wrapper-executed.marker");
+        Path untrustedMvnw = submittedRepo.resolve("mvnw");
+        // Wrapper script that would create the marker file if ever invoked on host
+        String script = "#!/bin/sh\ntouch \"" + markerFile.toAbsolutePath() + "\"\nexit 1\n";
+        Files.writeString(untrustedMvnw, script);
+        untrustedMvnw.toFile().setExecutable(true);
+
+        // 3. Set up a workflow run referencing the submitted repository
+        WorkflowRun run = new WorkflowRun("Add custom alias validation", submittedRepo.toString());
+        run.transitionTo(WorkflowStatus.WAITING_FOR_APPROVAL, WorkflowStage.PLAN_APPROVAL);
+        WorkflowApproval approval = WorkflowApproval.of(run.getId(), "APPROVED", "lead-reviewer", run.getCurrentPlanHash(), "Approved for execution test");
+        run.setApproval(approval);
+        run.transitionTo(WorkflowStatus.APPROVED, WorkflowStage.PLAN_APPROVAL);
+        workflowRepository.save(run);
+
+        // 4. Attempt implementation execution
+        assertThatThrownBy(() -> executionService.executeImplementation(run.getId(), run.getCurrentPlanHash()))
+                .isInstanceOf(SafetyPolicyViolationException.class)
+                .hasMessageContaining("unconditionally blocked");
+
+        // 5. Verify the submitted wrapper was NEVER executed on the host
+        assertThat(Files.exists(markerFile))
+                .as("Untrusted submitted wrapper must never be executed on the host")
+                .isFalse();
+
+        // 6. Verify workflow state is BLOCKED and MUTATION_BLOCKED event was recorded
+        WorkflowRun persisted = workflowRepository.findById(run.getId()).orElseThrow();
+        assertThat(persisted.getStatus()).isEqualTo(WorkflowStatus.BLOCKED);
+        assertThat(persisted.getCurrentStage()).isEqualTo(WorkflowStage.BLOCKED);
+        assertThat(persisted.getEvents()).anyMatch(e -> "MUTATION_BLOCKED".equals(e.eventType()));
     }
 }

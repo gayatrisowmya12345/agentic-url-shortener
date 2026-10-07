@@ -16,6 +16,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.hasSize;
@@ -47,6 +48,9 @@ class ModelBackedWorkflowIntegrationTest {
 
     @Autowired
     private FakeLlmModelProvider fakeLlmModelProvider;
+
+    @Autowired
+    private com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     @Test
     @DisplayName("End-to-end model-backed workflow execution with structured output")
@@ -93,9 +97,19 @@ class ModelBackedWorkflowIntegrationTest {
         String id = responseBody.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
         String planHash = responseBody.replaceAll(".*\"planHash\":\"([^\"]+)\".*", "$1");
 
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"));
@@ -133,9 +147,19 @@ class ModelBackedWorkflowIntegrationTest {
         String id = responseBody.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
         String planHash = responseBody.replaceAll(".*\"planHash\":\"([^\"]+)\".*", "$1");
 
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
@@ -166,10 +190,67 @@ class ModelBackedWorkflowIntegrationTest {
         String id = responseBody.replaceAll(".*\"id\":\"([^\"]+)\".*", "$1");
         String planHash = responseBody.replaceAll(".*\"planHash\":\"([^\"]+)\".*", "$1");
 
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
+                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
+    }
+
+    @Test
+    @DisplayName("Model proposing hardcoded 3-30 bounds for min-4 requirement is rejected and safely falls back to trusted requirement-derived proposal")
+    void modelProposingHardcodedBoundsFallsBackToTrustedDerivedProposal() throws Exception {
+        // Model tries to propose hardcoded 3-30 bounds
+        String badModelProposal = """
+                {
+                  "path": "src/main/java/com/linkforge/service/link/AliasValidator.java",
+                  "operation": "MODIFY",
+                  "proposedContent": "package com.linkforge.service.link; public final class AliasValidator { public static final int MIN_LENGTH = 3; public static final int MAX_LENGTH = 30; public static void validate(String a) {} }",
+                  "description": "Model hardcoded 3-30 proposal"
+                }
+                """;
+        fakeLlmModelProvider.setEnabled(true);
+        fakeLlmModelProvider.setResponsePayload(badModelProposal);
+
+        String payload = """
+                {
+                  "requirement": "Require custom link aliases to have a minimum length of 4 characters and maximum length of 30 characters"
+                }
+                """;
+
+        MvcResult createResult = mockMvc.perform(post("/api/v1/workflows")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(payload))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andReturn();
+
+        String id = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("id").asText();
+        String planHash = objectMapper.readTree(createResult.getResponse().getContentAsString()).get("planHash").asText();
+
+        // Phase 1 approval: triggers proposal generation
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        // Proposal must NOT contain the model's hardcoded MIN_LENGTH = 3.
+        // It must safely fall back to trusted requirement-derived implementation enforcing MIN_LENGTH = 4.
+        String proposalJson = approveResult.getResponse().getContentAsString();
+        assertThat(proposalJson).doesNotContain("MIN_LENGTH = 3;");
+        assertThat(proposalJson).contains("MIN_LENGTH = 4;");
     }
 }

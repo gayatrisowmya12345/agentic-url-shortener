@@ -1,10 +1,15 @@
 package com.linkforge.domain.workflow;
 
+import com.linkforge.domain.workflow.implementation.BuildDiagnosisResult;
 import com.linkforge.domain.workflow.implementation.GovernedExecutionRecord;
 import com.linkforge.domain.workflow.implementation.ImplementationProposal;
+import com.linkforge.domain.workflow.implementation.RepairAttemptRecord;
+import com.linkforge.domain.workflow.implementation.RepairProposal;
 import com.linkforge.domain.workflow.scenario.RepositoryEvidence;
 import com.linkforge.domain.workflow.scenario.Scenario;
 import com.linkforge.domain.workflow.specialist.SpecialistInvocation;
+
+import com.linkforge.domain.workflow.release.ReleaseReadinessOutcome;
 
 import java.time.Instant;
 import java.util.ArrayList;
@@ -16,7 +21,7 @@ public class WorkflowRun {
 
     private final String id;
     private final String originalRequirement;
-    private final String requirement;
+    private String requirement;
     private String repositoryPath;
     private Scenario scenario;
     private RepositoryEvidence repositoryEvidence;
@@ -41,6 +46,10 @@ public class WorkflowRun {
     private WorkflowCancellation cancellation;
     private ImplementationProposal implementationProposal;
     private GovernedExecutionRecord executionRecord;
+    private RepairProposal repairProposal;
+    private final List<RepairAttemptRecord> repairAttempts = new ArrayList<>();
+    private BuildDiagnosisResult lastDiagnosis;
+    private ReleaseReadinessOutcome releaseReadiness;
 
     public WorkflowRun(String requirement) {
         this(requirement, null);
@@ -199,6 +208,11 @@ public class WorkflowRun {
         return requirement;
     }
 
+    public synchronized void setRequirement(String requirement) {
+        this.requirement = requirement;
+        this.updatedAt = Instant.now();
+    }
+
     public synchronized String getRepositoryPath() {
         return repositoryPath;
     }
@@ -321,6 +335,44 @@ public class WorkflowRun {
 
     public synchronized void setExecutionRecord(GovernedExecutionRecord executionRecord) {
         this.executionRecord = executionRecord;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized RepairProposal getRepairProposal() {
+        return repairProposal;
+    }
+
+    public synchronized void setRepairProposal(RepairProposal repairProposal) {
+        this.repairProposal = repairProposal;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized List<RepairAttemptRecord> getRepairAttempts() {
+        return Collections.unmodifiableList(new ArrayList<>(repairAttempts));
+    }
+
+    public synchronized void addRepairAttempt(RepairAttemptRecord attempt) {
+        if (attempt != null) {
+            this.repairAttempts.add(attempt);
+            this.updatedAt = Instant.now();
+        }
+    }
+
+    public synchronized BuildDiagnosisResult getLastDiagnosis() {
+        return lastDiagnosis;
+    }
+
+    public synchronized void setLastDiagnosis(BuildDiagnosisResult lastDiagnosis) {
+        this.lastDiagnosis = lastDiagnosis;
+        this.updatedAt = Instant.now();
+    }
+
+    public synchronized ReleaseReadinessOutcome getReleaseReadiness() {
+        return releaseReadiness;
+    }
+
+    public synchronized void setReleaseReadiness(ReleaseReadinessOutcome releaseReadiness) {
+        this.releaseReadiness = releaseReadiness;
         this.updatedAt = Instant.now();
     }
 }

@@ -20,6 +20,10 @@ public record FileChangeProposal(
         String specialistRole,
         String description
 ) {
+    public String patchContent() {
+        return proposedContent;
+    }
+
     public static FileChangeProposal of(
             String path,
             FileChangeOperation operation,

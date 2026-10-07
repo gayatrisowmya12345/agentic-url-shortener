@@ -74,9 +74,18 @@ class WorkflowControllerScenarioIntegrationTest {
         String id = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
         String planHash = objectMapper.readTree(result.getResponse().getContentAsString()).get("planHash").asText();
 
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"));
@@ -86,12 +95,22 @@ class WorkflowControllerScenarioIntegrationTest {
     @DisplayName("POST /api/v1/workflows executes BROWNFIELD request with inspected repository fixture")
     void createBrownfieldWorkflowWithRepo() throws Exception, IOException {
         Path fixtureRepo = testApprovedRoot.resolve("brownfield-api-fixture");
-        Files.createDirectories(fixtureRepo.resolve("src"));
+        Path fixtureSrc = fixtureRepo.resolve("src/main/java/com/example/fixture");
+        Files.createDirectories(fixtureSrc);
         Files.writeString(fixtureRepo.resolve("pom.xml"), "<project><artifactId>fixture</artifactId></project>");
+        Files.writeString(fixtureSrc.resolve("LinkShortenerService.java"), """
+                package com.example.fixture;
+
+                public class LinkShortenerService {
+                    public String shorten(String url, String alias) {
+                        return "fixture-short";
+                    }
+                }
+                """);
 
         String payload = """
                 {
-                  "requirement": "Refactor existing codebase to use H2 database",
+                  "requirement": "Refactor existing codebase to add custom alias support",
                   "repositoryPath": "brownfield-api-fixture"
                 }
                 """;
@@ -118,8 +137,8 @@ class WorkflowControllerScenarioIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("COMPLETED"))
-                .andExpect(jsonPath("$.currentStage").value("FINISHED"));
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"));
     }
 
     @Test
@@ -223,10 +242,19 @@ class WorkflowControllerScenarioIntegrationTest {
 
         String planHash = objectMapper.readTree(clarifyResult.getResponse().getContentAsString()).get("planHash").asText();
 
-        // 3. Approve plan to reach completion
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        // 3. Approve plan to pause at proposal, then approve proposal to complete
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"));
@@ -255,10 +283,17 @@ class WorkflowControllerScenarioIntegrationTest {
         String id = objectMapper.readTree(result.getResponse().getContentAsString()).get("id").asText();
         String planHash = objectMapper.readTree(result.getResponse().getContentAsString()).get("planHash").asText();
 
-        // Approve workflow to complete it
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        // Approve plan then proposal to complete workflow
+        MvcResult approveResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", planHash)))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approveResult.getResponse().getContentAsString()).get("planHash").asText();
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
 

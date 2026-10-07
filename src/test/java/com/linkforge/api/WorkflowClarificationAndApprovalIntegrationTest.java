@@ -229,23 +229,42 @@ class WorkflowClarificationAndApprovalIntegrationTest {
                 }
                 """, planHash);
 
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        MvcResult approvePlanResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(approvePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(id))
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andExpect(jsonPath("$.specialistInvocations", hasSize(5)))
+                .andReturn();
+
+        String proposalHash = objectMapper.readTree(approvePlanResult.getResponse().getContentAsString()).get("planHash").asText();
+        String approveProposalPayload = String.format("""
+                {
+                  "decision": "APPROVED",
+                  "planHash": "%s",
+                  "approver": "principal-architect",
+                  "comments": "Architecture reviewed and confirmed valid"
+                }
+                """, proposalHash);
+
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(approveProposalPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(id))
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.currentStage").value("FINISHED"))
                 .andExpect(jsonPath("$.approval.decision").value("APPROVED"))
                 .andExpect(jsonPath("$.approval.approver").value("principal-architect"))
-                .andExpect(jsonPath("$.approval.planHash").value(planHash))
-                .andExpect(jsonPath("$.approval.comments").value("Architecture reviewed and confirmed valid"))
+                .andExpect(jsonPath("$.approval.planHash").value(proposalHash))
                 .andExpect(jsonPath("$.specialistInvocations", hasSize(5)));
 
         // Verify repeat/duplicate approval is idempotent
         mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(approvePayload))
+                        .content(approveProposalPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"));
     }
@@ -364,12 +383,25 @@ class WorkflowClarificationAndApprovalIntegrationTest {
                         .content(approvePayload))
                 .andExpect(status().isUnauthorized());
 
-        // 6. Submit approval with valid Bearer token -> 200
-        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+        // 6. Submit plan approval with valid Bearer token -> 200 (pauses at proposal)
+        MvcResult approvePlanResult = mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
                         .header("Authorization", "Bearer secret-approve-token")
                         .header("X-Actor-Id", "security-admin")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(approvePayload))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("WAITING_FOR_APPROVAL"))
+                .andExpect(jsonPath("$.currentStage").value("IMPLEMENTATION_PROPOSAL"))
+                .andReturn();
+
+        // 7. Submit proposal approval with valid Bearer token -> 200 (completes)
+        String proposalHash = objectMapper.readTree(approvePlanResult.getResponse().getContentAsString()).get("planHash").asText();
+        String approveProposalPayload = String.format("{\"decision\": \"APPROVED\", \"planHash\": \"%s\"}", proposalHash);
+        mockMvc.perform(post("/api/v1/workflows/" + id + "/approve")
+                        .header("Authorization", "Bearer secret-approve-token")
+                        .header("X-Actor-Id", "security-admin")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(approveProposalPayload))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.status").value("COMPLETED"))
                 .andExpect(jsonPath("$.approval.approver").value("security-admin"));

@@ -268,6 +268,7 @@ public class WorkflowOrchestrator {
             combined.append(". Clarification: ").append(c.clarificationText());
         }
         String effectiveRequirement = combined.toString();
+        run.setRequirement(effectiveRequirement);
 
         return Optional.of(executePipeline(run, effectiveRequirement, effectiveRepoPath));
     }
@@ -314,22 +315,56 @@ public class WorkflowOrchestrator {
         }
 
         String effectiveApprover = (approver != null && !approver.isBlank()) ? approver.trim() : "authorized-approver";
-        WorkflowApproval approval = WorkflowApproval.of(run.getId(), normalizedDecision, effectiveApprover, planHash.trim(), comments);
-        run.setApproval(approval);
-        workflowRepository.saveApproval(approval);
+        WorkflowStage stageBeingApproved = run.getCurrentStage();
+
+        if (stageBeingApproved == WorkflowStage.REPAIR_APPROVAL) {
+            if (governedExecutionService == null) {
+                throw new IllegalStateException("Governed execution service is not configured for repair.");
+            }
+            governedExecutionService.executeRepair(run.getId(), planHash.trim(), normalizedDecision, effectiveApprover, comments);
+            return workflowRepository.findById(run.getId());
+        }
 
         if ("REJECTED".equals(normalizedDecision)) {
-            run.transitionTo(WorkflowStatus.REJECTED, WorkflowStage.PLAN_APPROVAL);
+            run.transitionTo(WorkflowStatus.REJECTED, stageBeingApproved);
+            WorkflowApproval approval = WorkflowApproval.of(run.getId(), normalizedDecision, effectiveApprover, planHash.trim(), comments);
+            run.setApproval(approval);
+            workflowRepository.saveApproval(approval);
             run.addEvent(WorkflowEvent.of(
-                    "PLAN_REJECTED",
-                    WorkflowStage.PLAN_APPROVAL.name(),
-                    "Plan hash " + planHash.trim() + " rejected by " + effectiveApprover +
+                    stageBeingApproved == WorkflowStage.IMPLEMENTATION_PROPOSAL ? "PROPOSAL_REJECTED" : "PLAN_REJECTED",
+                    stageBeingApproved.name(),
+                    "Approval rejected for hash " + planHash.trim() + " by " + effectiveApprover +
                             (comments != null && !comments.isBlank() ? ": " + comments : "")
             ));
             return Optional.of(workflowRepository.save(run));
         }
 
-        // APPROVED: proceed to specialist coordination
+        // APPROVED
+        WorkflowApproval approval = WorkflowApproval.of(run.getId(), normalizedDecision, effectiveApprover, planHash.trim(), comments);
+        run.setApproval(approval);
+        workflowRepository.saveApproval(approval);
+
+        if (stageBeingApproved == WorkflowStage.IMPLEMENTATION_PROPOSAL) {
+            run.addEvent(WorkflowEvent.of(
+                    "PLAN_APPROVED",
+                    WorkflowStage.IMPLEMENTATION_PROPOSAL.name(),
+                    "Proposal hash " + planHash.trim() + " approved by " + effectiveApprover
+            ));
+            run.addEvent(WorkflowEvent.of(
+                    "PROPOSAL_APPROVED",
+                    WorkflowStage.IMPLEMENTATION_PROPOSAL.name(),
+                    "Proposal hash " + planHash.trim() + " approved by " + effectiveApprover +
+                            (comments != null && !comments.isBlank() ? ": " + comments : "")
+            ));
+            workflowRepository.save(run);
+            if (governedExecutionService != null && run.getImplementationProposal() != null && run.getImplementationProposal().supported()) {
+                governedExecutionService.executeImplementation(run.getId(), planHash.trim());
+                return workflowRepository.findById(run.getId());
+            }
+            return Optional.of(run);
+        }
+
+        // Proceed from PLAN_APPROVAL to specialist coordination
         run.addEvent(WorkflowEvent.of(
                 "PLAN_APPROVED",
                 WorkflowStage.PLAN_APPROVAL.name(),
@@ -852,13 +887,41 @@ public class WorkflowOrchestrator {
             ));
         }
 
-        // Transition to Finished & Completed
-        run.transitionTo(WorkflowStatus.COMPLETED, WorkflowStage.FINISHED);
         run.addEvent(WorkflowEvent.of(
-                "WORKFLOW_COMPLETED",
-                WorkflowStage.FINISHED.name(),
-                "Agentic workflow vertical slice completed successfully with specialist coordination."
+                "COORDINATION_ANALYSIS_COMPLETED",
+                WorkflowStage.SPECIALIST_COORDINATION.name(),
+                "Specialist coordination analysis and plan elaboration completed."
         ));
+
+        if (governedExecutionService != null) {
+            com.linkforge.domain.workflow.implementation.ImplementationProposal proposal =
+                    governedExecutionService.proposeImplementation(run);
+
+            if (proposal.supported()) {
+                run.transitionTo(WorkflowStatus.WAITING_FOR_APPROVAL, WorkflowStage.IMPLEMENTATION_PROPOSAL);
+                run.setCurrentPlanHash(proposal.proposalHash());
+                run.setApproval(null);
+                run.addEvent(WorkflowEvent.of(
+                        "AWAITING_PROPOSAL_APPROVAL",
+                        WorkflowStage.IMPLEMENTATION_PROPOSAL.name(),
+                        "Analysis and plan coordination completed. Paused awaiting approval of implementation proposal hash: " + proposal.proposalHash()
+                ));
+            } else {
+                run.transitionTo(WorkflowStatus.BLOCKED, WorkflowStage.IMPLEMENTATION_PROPOSAL);
+                run.addEvent(WorkflowEvent.of(
+                        "IMPLEMENTATION_SCOPE_UNSUPPORTED",
+                        WorkflowStage.IMPLEMENTATION_PROPOSAL.name(),
+                        proposal.unsupportedReason()
+                ));
+            }
+        } else {
+            run.transitionTo(WorkflowStatus.COMPLETED, WorkflowStage.FINISHED);
+            run.addEvent(WorkflowEvent.of(
+                    "WORKFLOW_COMPLETED",
+                    WorkflowStage.FINISHED.name(),
+                    "Agentic workflow vertical slice completed successfully with specialist coordination."
+            ));
+        }
 
         return workflowRepository.save(run);
     }
